@@ -1,32 +1,33 @@
 ---
-
 # AmeNoOhobari Chess Engine
 
 ![MIT License](https://img.shields.io/badge/license-MIT-FF4136?labelColor=gray)
 ![Language](https://img.shields.io/badge/Language-x86_64_Assembly-blue?labelColor=gray)
 ![Creator](https://img.shields.io/badge/Creator-Tonmoy_KS-7DF9FF?labelColor=gray)
 
-**AmeNoOhobari V.1.2.3 – The God-Slayer Chess Engine**  
-_A pure assembly chess engine focused on performance, move ordering heuristics, and low-level elegance._
+**AmeNoOhobari v.1.2.4 – The God-Slayer**  
+_A pure assembly chess engine with cutting-edge move ordering, policy network hooks, and tactical search._
 
 ---
 
-## 🚀 Features (v.1.2.3)
+## 🚀 Features (v.1.2.4)
 
-- **Written in x86_64 Assembly** for ultimate speed and control.
-- **Classic Chess Logic:** Piece values, piece-square tables, simple pawn logic.
-- **Improved Move Ordering:**  
-  - Added killer moves and history heuristics for alpha-beta pruning.
-  - MVV-LVA (Most Valuable Victim - Least Valuable Attacker) for captures.
-- **Root and Recursive Search:**  
-  - Negamax with alpha-beta, killer/history, and move scores for efficient tree pruning.
+- **Written in x86_64 Assembly:** Ultimate speed, total hardware control, zero dependencies.
+- **Move Ordering:**  
+  - MVV-LVA scoring for tactical sharpness.
+  - Killer moves and history heuristics for quiet move prioritization.
+  - **NEW:** Policy network hook (ready for CNN integration).
+- **Quiescence Search:**  
+  - Explores only tactical moves at leaf nodes for stable evaluation.
+- **Negamax Search:**  
+  - Alpha-beta pruning, principal variation search (PVS), late move reductions (LMR).
 - **Efficient Move Generation:**  
-  - Piece-specific routines, generic slider logic, basic pawn moves.
+  - Piece-specific and generic slider logic, basic pawn moves.
 - **Minimalist Board Representation:**  
   - 64-byte array, bitwise color/type encoding.
 - **Output:**  
-  - Prints the best move in UCI format (`bestmove g1f3`).
-- **No external dependencies** required—just NASM and LD.
+  - UCI-style best move (e.g., `bestmove g1f3`) for GUI compatibility.
+- **No external libraries** required—just NASM and LD.
 
 ---
 
@@ -52,41 +53,48 @@ bestmove g1f3
 
 ## 🧠 How It Works
 
-- **Board & Pieces:** 64 squares, constants for piece type and color.
-- **Evaluation:** Material, piece-square tables, and mirrored squares for black.
+- **Board & Pieces:** 64 squares; constants for piece type and color.
+- **Evaluation:** Material, piece-square tables, mirrored squares for black.
 - **Move Generation:**  
-  - Knights, kings, bishops, rooks, queens, and pawns.
+  - Knights, kings, bishops, rooks, queens, pawns.
   - Sliders use precomputed offsets and wrap-around checks.
 - **Move Ordering:**  
   - MVV-LVA for captures.
-  - Killer moves and history table for quiet moves.
-  - Move scores for optimal search order.
+  - Killer moves/history table for quiet moves.
+  - **Policy Network Hook:** Integrate a CNN for move probability scoring (currently a placeholder).
 - **Search:**  
-  - Negamax with alpha-beta, killer/history, and node count.
+  - Negamax with alpha-beta, PVS, LMR, and node count.
+  - **Quiescence search** at leaf nodes for tactical stability.
 - **Output:**  
-  - UCI-style bestmove in algebraic notation.
+  - UCI-style `bestmove` in algebraic notation.
 
 ---
 
-## 🗝️ Changes in v.1.2.3
+## 🔥 What's New in v.1.2.4
 
-- **Heuristics Added:** Killer moves, history heuristic, and move scores for improved pruning and speed.
-- **Move List Structure Updated:** 4 bytes per move for richer data.
-- **Alpha/Beta Improvements:** More robust recursive search and cutoff logic.
-- **Root Search Refined:** Better best-move selection loop and heuristic updates.
-- **More Efficient Output:** UCI notation, easy for GUI integration.
+- **Policy Network Integration:**  
+  - Added hooks for CNN-based move probability scoring (`policy_scores` array).
+  - Ready for external C/Python/TensorFlow integration.
+- **Quiescence Search:**  
+  - Tactical filtering for stable leaf node evaluation.
+- **Improved Move Ordering:**  
+  - Policy scores, killer moves, history, and MVV-LVA are combined for best move selection.
+- **Search Optimizations:**  
+  - Principal Variation Search (PVS) and Late Move Reductions (LMR) for deeper, faster pruning.
+- **Cleaner Output, Structure, and Comments.**
 
 ---
 
 ## ⚠️ Limitations
 
-- Pawn move generation is simplified (no promotions, en passant).
-- No castling or advanced chess rules (focus is on search, heuristics, and move ordering).
-- Not a complete chess engine yet—perfect for learning and hacking!
+- Pawn logic: No promotions/en passant yet.
+- No castling or advanced rules.
+- Policy network is a stub—needs external integration for neural move ordering.
+- Not a complete chess engine yet; ideal for learning, hacking, and experimentation.
 
 ---
 
-## 📝 License
+## 📃 License
 
 MIT License  
 © [Tonmoy KS](https://github.com/Tonmoy-KS)
@@ -95,7 +103,7 @@ MIT License
 
 ## 🤝 Contributing
 
-Pull requests, optimizations, and bug fixes are welcome!  
+Pull requests, optimizations, and bug fixes are very welcome!  
 Open an issue for feature requests or ideas.
 
 ---
