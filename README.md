@@ -1,17 +1,17 @@
 ---
 
-# Ame-No-Ohobari Chess Engine
+# Ame-No-Ohobari Chess Engine (OUTDATED)
 
 ![MIT License](https://img.shields.io/badge/license-MIT-FF4136?labelColor=gray)
 ![Language](https://img.shields.io/badge/Language-x86_64_Assembly-blue?labelColor=gray)
 ![Creator](https://img.shields.io/badge/Creator-Tonmoy_KS-7DF9FF?labelColor=gray)
 
-**Ame-No-Ohobari v.1.4.7 – The God-Slayer**  
+**Ame-No-Ohobari v.1.4.7(OUTDATED) – The God-Slayer**  
 _A pure hand-crafted assembly chess engine with advanced pruning, hashing, and full pawn promotion support._
 
 ---
 
-## 🚀 Features (v.1.4.7)
+## 🚀 Features (v.1.4.7)(OUTDATED)
 
 - **Written in x86_64 Assembly:** No dependencies, maximum speed and control.
 - **Iterative Deepening with Aspiration Windows:** Smarter root search for best move.
