@@ -1,5 +1,5 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.4.3 - The God-Slayer Chess Engine
+; AmeNoOhobari.asm - V.1.4.4 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
 ; Version: 1.2.4
 ;
@@ -72,7 +72,7 @@ len_bestmove_msg: equ $ - bestmove_msg
 newline: db 10
 square_to_an: db "a1b1c1d1e1f1g1h1a2b2c2d2e2f2g2h2a3b3c3d3e3f3g3h3a4b4c4d4e4f4g4h4a5b5c5d5e5f5g5h5a6b6c6d6e6f6g6h6a7b7c7d7e7f7g7h7a8b8c8d8e8f8g8h8"
 fen_pieces: db "PNBRQK  pnbrqk"
-lcg_seed: dq 123456789
+lcg_seed: dq 123456789123456789
 
 section .bss
 board: resb 64
@@ -167,7 +167,7 @@ negamax:
     movzx ecx, byte[r10]; movzx edx, byte[r10+1]
     call make_move
     mov rdi, r14; dec rdi
-    call is_square_attacked_by_opponent
+    call is_king_in_check
     test al, al; jz .no_extension; inc rdi
 .no_extension:
     cmp r15, 0; je .full_window_search
@@ -222,24 +222,24 @@ quiescence_search:
 
 evaluate:
     push rbx; push rcx; push rsi; push rdi
-    xor eax, eax
-    call evaluate_pawns; add eax, edx
-    call evaluate_king_safety; add eax, edx
-    call evaluate_rooks; add eax, edx
+    xor edx, edx
+    call evaluate_pawns; add edx, eax
+    call evaluate_king_safety; add edx, eax
+    call evaluate_rooks; add edx, eax
     mov rcx, 0
 .eval_loop:
     cmp rcx, 64; jge .eval_done
     movzx rbx, byte [board + rcx]; cmp rbx, EMPTY; je .next_square
     mov rdi, rbx; and rdi, COLOR_MASK; and rbx, PIECE_MASK
-    movsx rdx, word [piece_values - 2 + rbx*2]
+    movsx rax, word [piece_values - 2 + rbx*2]
     mov rsi, [pst_pointers - 8 + rbx*8]
     cmp rdi, 0; je .is_white_pst
-    mov r8, 63; sub r8, rcx; movsx r9, byte [rsi + r8]; neg r9; add rdx, r9; jmp .add_to_score
-.is_white_pst: movsx r9, byte [rsi + rcx]; add rdx, r9
-.add_to_score: cmp rdi, 0; je .add_val; sub eax, edx; jmp .next_square
-.add_val: add eax, edx
+    mov r8, 63; sub r8, rcx; movsx r9, byte [rsi + r8]; neg r9; add rax, r9; jmp .add_to_score
+.is_white_pst: movsx r9, byte [rsi + rcx]; add rax, r9
+.add_to_score: cmp rdi, 0; je .add_val; sub edx, eax; jmp .next_square
+.add_val: add edx, eax
 .next_square: inc rcx; jmp .eval_loop
-.eval_done: pop rdi; pop rsi; pop rcx; pop rbx; ret
+.eval_done: mov eax, edx; pop rdi; pop rsi; pop rcx; pop rbx; ret
 
 score_moves:
     push r12; push r13; mov r10, move_list; mov r12, 0
@@ -257,12 +257,10 @@ score_moves:
 
 static_exchange_evaluation:
     push rbx; push rcx; push rdx; push rsi; push rdi; push r12; push r13; push r14; push r15
-    sub rsp, 32 ; gain_list[16]
-    mov r12, rsp ; gain_list pointer
-    mov r13d, [piece_values + W_KING*2] ; King value for comparison
-    mov r14, r8 ; from_sq
-    mov r15, r9 ; to_sq
-    mov r11d, 0 ; see score
+    sub rsp, 32 
+    mov r12, rsp
+    mov r14, r8
+    mov r15, r9
     movzx eax, byte [board + r15]
     and eax, PIECE_MASK
     movsx eax, word [piece_values - 2 + eax*2]
@@ -270,57 +268,53 @@ static_exchange_evaluation:
     mov edi, 1
 .see_loop:
     mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
-    mov rsi, r15 ; target
+    mov rsi, r15
     mov dl, [side_to_move]
     call get_least_valuable_attacker
     cmp rax, -1
     je .see_done
-    mov r14, rax
-    movzx ecx, byte [board+r14]
+    movzx ecx, byte [board+rax]
     and ecx, PIECE_MASK
     movsx ecx, word [piece_values - 2 + ecx*2]
     mov [r12 + edi*2], cx
     inc edi
-    ; Conceptually make the move
-    mov cl, [board+r14]
+    mov cl, [board+rax]
     mov byte [board+r15], cl
-    mov byte [board+r14], EMPTY
+    mov byte [board+rax], EMPTY
     jmp .see_loop
 .see_done:
-    ; Unwind and restore board
-    dec edi
+    mov ecx, edi
 .unwind_loop:
-    cmp edi, 0
-    jle .unwind_done
-    mov cl, [board+r15]
-    mov byte [board+r14], cl
-    movzx eax, word [r12 + edi*2]
-    mov byte [board+r15], al
-    dec edi
+    dec ecx
+    cmp ecx, 0
+    jl .unwind_done
+    mov al, [board+r15]
+    mov byte [board+rax], al
+    movzx ebx, word [r12 + ecx*2]
+    mov byte [board+r15], bl
     jmp .unwind_loop
 .unwind_done:
     mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
-    ; Calculate score
-    movsx eax, word [r12 + 0]
+    movsx eax, word [r12]
     mov ecx, 1
 .calc_see:
     cmp ecx, edi
     jge .final_see
-    movsx rdx, word [r12 + ecx*2]
+    movsx edx, word [r12 + ecx*2]
     sub eax, edx
     inc ecx
     cmp ecx, edi
     jge .final_see
-    movsx rdx, word [r12 + ecx*2]
-    add eax, rdx
-    inc ecx
-    jmp .calc_see
+    movsx edx, word [r12 + ecx*2]
+    add eax, edx
+    inc ecx; jmp .calc_see
 .final_see:
     add rsp, 32
     pop r15; pop r14; pop r13; pop r12; pop rdi; pop rsi; pop rdx; pop rcx; pop rbx
     ret
 
 get_least_valuable_attacker: ret
+is_king_in_check: ret
 is_square_attacked: ret
 is_square_attacked_by_opponent: ret
 check_pawn_attacks: ret
@@ -339,7 +333,7 @@ weighted_choice: ret
 compute_zobrist_hash: ret
 initialize_zobrist_keys:
     mov rdi, zobrist_keys
-    mov rcx, 769 ;
+    mov rcx, 769 
 .rand_loop:
     push rcx
     call lcg_rand
