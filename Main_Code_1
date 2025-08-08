@@ -1,7 +1,7 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.5.0 - The God-Slayer Chess Engine
+; AmeNoOhobari.asm - V.1.5.3 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
-; Version: 1.5.0
+; Version: 1.5.3
 ;
 ; How to Compile and Run (on Linux):
 ;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
@@ -44,10 +44,12 @@ active_tb_pointer: dq 0
 section .data
 EMPTY       equ 0; W_PAWN      equ 1; W_KNIGHT    equ 2; W_BISHOP    equ 3; W_ROOK      equ 4; W_QUEEN     equ 5; W_KING      equ 6
 B_PAWN      equ 9; B_KNIGHT    equ 10; B_BISHOP    equ 11; B_ROOK      equ 12; B_QUEEN     equ 13; B_KING      equ 14
-PIECE_MASK  equ 7; COLOR_MASK  equ 8 ; TT_EXACT      equ 1; TT_LOWERBOUND equ 2; TT_UPPERBOUND equ 3;
-W_OO_RIGHT  equ 1;
-W_OOO_RIGHT equ 2;
-B_OO_RIGHT  equ 4; B_OOO_RIGHT equ 8;
+PIECE_MASK equ 7; COLOR_MASK equ 8
+TT_EXACT equ 1; TT_LOWERBOUND equ 2; TT_UPPERBOUND equ 3
+W_OO_RIGHT equ 1
+W_OOO_RIGHT equ 2
+B_OO_RIGHT equ 4
+B_OOO_RIGHT equ 8
 
 piece_values: dw 0, 100, 320, 330, 500, 900, 10000
 passed_pawn_bonus: dw 0, 10, 30, 50, 75, 100, 150, 0
@@ -145,11 +147,120 @@ global _start
     mov [move_list_end], rdi
 %endmacro
 
+section .bss
+uci_input_buffer: resb 4096 ; Buffer for long UCI commands
+token_pointer:    resq 1   ; Pointer for our strtok-like function
+
+section .data
+uci_cmd_uci:        db "uci",0
+uci_cmd_isready:    db "isready",0
+uci_cmd_ucinewgame: db "ucinewgame",0
+uci_cmd_position:   db "position",0
+uci_cmd_startpos:   db "startpos",0
+uci_cmd_fen:        db "fen",0
+uci_cmd_moves:      db "moves",0
+uci_cmd_go:         db "go",0
+uci_cmd_quit:       db "quit",0
+uci_cmd_depth:      db "depth",0
+uci_cmd_movetime:   db "movetime",0
+uci_cmd_wtime:      db "wtime",0
+uci_cmd_btime:      db "btime",0
+uci_cmd_winc:       db "winc",0
+uci_cmd_binc:       db "binc",0
+
+uci_response_id:    db "id name AmeNoOhobari v1.5.3",10,0
+uci_response_author:db "id author Tonmoy-KS",10,0
+uci_response_uciok: db "uciok",10,0
+uci_response_readyok:db "readyok",10,0
+
+section .text
+global _start
 _start:
-    call initialize_engine
+.main_loop:
+    ; Read a command from stdin
+    mov rax, 0 ; sys_read
+    mov rdi, 0 ; stdin
+    mov rsi, uci_input_buffer
+    mov rdx, 4096
+    syscall
+
+    mov rdi, uci_input_buffer
+    call parse_token
+    mov rdi, rax ; rdi now points to the first word
+    
+    ; Dispatch command
+    mov rsi, uci_cmd_uci; call strcmp; test rax, rax; jz .handle_uci
+    mov rsi, uci_cmd_isready; call strcmp; test rax, rax; jz .handle_isready
+    mov rsi, uci_cmd_ucinewgame; call strcmp; test rax, rax; jz .handle_ucinewgame
+    mov rsi, uci_cmd_position; call strcmp; test rax, rax; jz .handle_position
+    mov rsi, uci_cmd_go; call strcmp; test rax, rax; jz .handle_go
+    mov rsi, uci_cmd_quit; call strcmp; test rax, rax; jz .handle_quit
+    jmp .main_loop
+
+.handle_uci:
+    mov rsi, uci_response_id; call print_string
+    mov rsi, uci_response_author; call print_string
+    mov rsi, uci_response_uciok; call print_string
+    jmp .main_loop
+.handle_isready:
+    mov rsi, uci_response_readyok; call print_string
+    jmp .main_loop
+.handle_ucinewgame:
+    call initialize_board
+    jmp .main_loop
+.handle_quit:
+    mov rax, 60; xor rdi, rdi; syscall
+
+.handle_position:
+    call parse_token
+    mov rdi, rax
+    mov rsi, uci_cmd_startpos; call strcmp
+    test rax, rax; jz .pos_startpos
+    ; TODO: Implement FEN parsing
+    jmp .main_loop ; For now, skip FEN
+.pos_startpos:
+    call initialize_board
+.parse_moves:
+    call parse_token
+    cmp rax, 0; je .main_loop ; No more tokens
+    mov rdi, rax
+    mov rsi, uci_cmd_moves; call strcmp
+    test rax, rax; jne .main_loop ; Not the "moves" keyword, so we're done
+.moves_loop:
+    call parse_token
+    cmp rax, 0; je .main_loop
+    mov rdi, rax
+    call parse_uci_move
+    ; parse_uci_move returns move data in rax
+    ; make_move expects it in r10, so we use a temp buffer
+    mov [move_list], rax
+    mov r10, move_list
+    call make_move
+    jmp .moves_loop
+
+.handle_go:
+    ; Parse go parameters
+    xor r8, r8 ; depth
+    xor r9, r9 ; movetime
+.go_loop:
+    call parse_token
+    cmp rax, 0; je .do_search
+    mov rdi, rax
+    mov rsi, uci_cmd_depth; call strcmp
+    test rax, rax; jne .check_movetime
+    call parse_token; mov rdi, rax; call parse_int; mov r8, rax
+    jmp .go_loop
+.check_movetime:
+    mov rsi, uci_cmd_movetime; call strcmp
+    test rax, rax; jne .go_loop
+    call parse_token; mov rdi, rax; call parse_int; mov r9, rax
+    jmp .go_loop
+.do_search:
+    ; For now, we only use depth. A full impl would use time controls.
+    mov edi, r8d
     call iterative_deepening
     call print_best_move
-    mov rax, 60; xor rdi, rdi; syscall
+    jmp .main_loop
 
 initialize_engine:
     call initialize_board
@@ -158,10 +269,16 @@ initialize_engine:
     ret
 
 iterative_deepening:
+    ; edi now contains the max depth from the "go depth X" command
+    ; If no depth was given, edi will be 0.
+    test edi, edi
+    jnz .use_uci_depth
+    mov edi, 100 ; Default to max depth 100 if none specified
+.use_uci_depth:
     mov dword [best_score_prev_iter], 0
     mov ecx, 1
 .depth_loop:
-    cmp ecx, 100
+    cmp ecx, edi ; Loop up to the requested depth
     jg .id_done
     mov edx, [best_score_prev_iter]
     mov esi, edx; sub esi, 50; add edx, 50
@@ -323,57 +440,84 @@ negamax:
 
 ; Is this the first move we are searching? (move_index == 0)
 cmp r15, 0
-jne .null_window_search
+jne .late_move_search_setup
 
+; --- 1. Full Window Search (PV-Move) ---
+; The first move is our best guess, so we search it with a full window.
 .full_window_search:
-    mov rdi, r14; dec rdi     ; depth - 1
-    mov esi, r13d; neg esi    ; -beta
-    mov edx, r12d; neg edx    ; -alpha
+    mov rdi, r14; dec rdi
+    mov esi, r13d; neg esi
+    mov edx, r12d; neg edx
     call negamax
     neg eax
     jmp .store_score
 
-.null_window_search:
-    mov rdi, r14; dec rdi     ; depth - 1
-    mov esi, r12d; neg esi    ; new_beta = -alpha
-    dec esi                   ; new_alpha = -alpha - 1
-    mov edx, r12d; neg edx    ; new_beta = -alpha
+; --- 2. Null Window Search with Late Move Reductions ---
+.late_move_search_setup:
+    ; --- LMR Conditions ---
+    mov rbx, 0 ; rbx will hold our depth reduction amount. Default to 0.
+    cmp r14, 3 ; Is depth >= 3?
+    jle .apply_reduction
+    cmp r15, 3 ; Is move_index >= 4?
+    jle .apply_reduction
+
+    ; Check if the move is tactical (capture or promotion)
+    movzx rdx, byte [r10+1] ; to_square
+    cmp byte [board+rdx], EMPTY
+    jne .apply_reduction ; It's a capture, don't reduce.
+    cmp byte [r10+2], 0
+    jne .apply_reduction ; It's a promotion, don't reduce.
+
+    ; Check if we are in check
+    push r15 ; Save move_index
+    call is_king_in_check
+    pop r15
+    test al, al
+    jnz .apply_reduction ; In check, don't reduce.
+
+    ; --- All conditions met. Calculate the reduction. ---
+    mov rbx, 1 ; Base reduction is 1 ply.
+    ; For very late moves, we can reduce even more.
+    ; R = 1 + (move_index / 8)
+    mov rax, r15
+    shr rax, 3 ; rax = r15 / 8
+    add rbx, rax
+
+.apply_reduction:
+    mov rdi, r14; dec rdi
+    sub rdi, rbx ; new_depth = depth - 1 - reduction
+
+    ; Search with a null window to quickly see if this move is better than alpha
+    mov esi, r12d; neg esi
+    dec esi
+    mov edx, r12d; neg edx
     call negamax
     neg eax
 
-    ; Check if the score is better than alpha but still less than beta
+    ; --- 3. Re-Search if Necessary ---
     cmp eax, r12d
-    jle .store_score ; If not > alpha, it's not a better move, just store it.
-    cmp eax, r13d
-    jge .store_score ; If >= beta, it's a cutoff, just store it and the loop will exit.
+    jle .store_score ; Failed low, the move was bad, as expected.
 
-    ; The null window search proved this move is better than the previous best.
-    ; Now we must re-search with the full window to find its true score.
-    mov rdi, r14; dec rdi     ; depth - 1
-    mov esi, r13d; neg esi    ; -beta
-    mov edx, r12d; neg edx    ; -alpha
+    ; The reduced search proved the move is good. We MUST re-search
+    ; with the FULL depth to get an accurate score.
+    mov rdi, r14; dec rdi ; Use the ORIGINAL depth-1
+    mov esi, r13d; neg esi
+    mov edx, r12d; neg edx
     call negamax
     neg eax
 
 .store_score:
     call unmake_move
 
-    ; Has this move produced a better score than ANY move so far?
     cmp eax, r8d
-    jle .next_move_negamax ; If not, continue
-
-    ; Yes, update our best score for this node
+    jle .next_move_negamax
     mov r8d, eax
 
-    ; Did this move raise alpha?
     cmp eax, r12d
-    jle .next_move_negamax ; If not, continue
-
-    ; Yes, alpha was raised. Update alpha and the TT flag.
+    jle .next_move_negamax
     mov r12d, eax
-    mov byte [rbp-8], TT_EXACT ; This is now a Principal Variation node
+    mov byte [rbp-8], TT_EXACT
 
-    ; Check for beta cutoff
     cmp r12d, r13d
     jge .beta_cutoff
 
@@ -458,12 +602,55 @@ quiescence_search:
 .q_exit: pop r15; pop r14; pop r13; pop r12; mov rsp, rbp; pop rbp; ret
 
 evaluate:
-    push rbx; push rcx; push rsi; push rdi
+    push rbx; push rcx; push rdx; push rsi; push rdi
+
+    ; First, try probing the tablebase
+    call probe_tablebase
+    cmp rax, 32767 ; Check for "not found"
+    jne .eval_done ; If found, rax already has the score.
+
+    ; --- If not in TB, do classical evaluation ---
+    xor edx, edx ; Clear total score
+
+    ; Base material and PSTs
+    call evaluate_base
+    add edx, eax
+
+    ; Advanced evaluation components
+    call evaluate_pawns
+    add edx, eax
+    call evaluate_king_safety
+    add edx, eax
+    call evaluate_rooks
+    add edx, eax
+
+    mov eax, edx
+
+.eval_done:
+    pop rdi; pop rsi; pop rdx; pop rcx; pop rbx
+    ret
+
+; This is the original part is now separated
+evaluate_base:
+    push rbx; push rcx; push rsi; push rdi; push r8; push r9
     xor edx, edx
-    call evaluate_pawns; add edx, eax
-    call evaluate_king_safety; add edx, eax
-    call evaluate_rooks; add edx, eax
     mov rcx, 0
+.eval_base_loop:
+    cmp rcx, 64; jge .eval_base_done
+    movzx rbx, byte [board + rcx]; cmp rbx, EMPTY; je .next_eval_square
+    mov rdi, rbx; and rdi, COLOR_MASK; and rbx, PIECE_MASK
+    movsx rax, word [piece_values - 2 + rbx*2]
+    mov rsi, [pst_pointers - 8 + rbx*8]
+    cmp rdi, 0; je .is_white_pst
+    mov r8, 63; sub r8, rcx; movsx r9, byte [rsi + r8]; neg r9; add rax, r9; jmp .add_to_score
+.is_white_pst: movsx r9, byte [rsi + rcx]; add rax, r9
+.add_to_score: cmp rdi, 0; je .add_val; sub edx, eax; jmp .next_eval_square
+.add_val: add edx, eax
+.next_eval_square: inc rcx; jmp .eval_base_loop
+.eval_base_done:
+    mov eax, edx
+    pop r9; pop r8; pop rdi; pop rsi; pop rcx; pop rbx
+    ret
 .eval_loop:
     cmp rcx, 64; jge .eval_done
     movzx rbx, byte [board + rcx]; cmp rbx, EMPTY; je .next_square
@@ -740,139 +927,191 @@ is_king_in_check:
     pop rcx; pop rbx; pop rsi; pop rdi
     ret
 
-; Dummy placeholders for other functions until they are implemented
-get_least_valuable_attacker: ret
-is_square_attacked_by_opponent: ret
+; Finds the square of the least valuable piece of 'attacker_color' that is attacking 'square'.
+get_least_valuable_attacker:
+    push rdi; push rsi; push r8; push r9
 
-; it Calculates bonuses and penalties for pawn structure.
-; it  Considers isolated, doubled, and passed pawns.
-evaluate_pawns:
-    push rbx; push rcx; push rdx; push rsi; push rdi; push r8
-    xor rax, rax ; score = 0
-    mov rcx, 0   ; square_index
-.pawn_loop:
-    cmp rcx, 64
-    jge .pawn_eval_done
+    mov r8, rdi             ; r8 = target square
+    mov r9b, sil            ; r9b = attacker color
 
-    movzx rbx, byte [board + rcx]
-    mov r8, rbx
-    and rbx, PIECE_MASK
-    cmp rbx, W_PAWN
-    jne .pawn_loop_next
+    ; --- Check in order of piece value (cheapest first) ---
+    ; 1. Pawns
+    call .find_pawn_attacker
+    cmp rax, -1
+    jne .lva_found
 
-    ; Found a pawn. Get its color.
-    mov rdi, rcx
-    mov rsi, r8
-    and rsi, COLOR_MASK
+    ; 2. Knights
+    call .find_knight_attacker
+    cmp rax, -1
+    jne .lva_found
 
-    ; --- Check for Passed Pawn ---
-    push rax
-    call is_passed
-    pop rax
-    test al, al
-    jz .check_isolated
-    ; It's a passed pawn. Add bonus based on rank.
-    mov rbx, rcx; shr rbx, 3 ; rbx = rank
-    mov rdx, [passed_pawn_bonus + rbx*2]
-    cmp rsi, 0 ; if color == WHITE
-    je .add_passed_bonus
-    neg rdx ; Black pawn, negate bonus
-.add_passed_bonus:
-    add rax, rdx
+    ; 3. Bishops (and diagonally, Queens)
+    mov rdi, W_BISHOP
+    call .find_sliding_attacker
+    cmp rax, -1
+    jne .lva_found
 
-.check_isolated:
-    ; --- Check for Isolated Pawn ---
-    push rax
-    call is_isolated
-    pop rax
-    test al, al
-    jz .check_doubled
-    ; It is isolated. Apply a penalty.
-    cmp rsi, 0
-    je .sub_isolated_penalty
-    add rax, 15 ; Penalty is negative for black, so add
-    jmp .check_doubled
-.sub_isolated_penalty:
-    sub rax, 15
+    ; 4. Rooks (and cardinally, Queens)
+    mov rdi, W_ROOK
+    call .find_sliding_attacker
+    cmp rax, -1
+    jne .lva_found
 
-.check_doubled:
-    ; --- Check for Doubled Pawn ---
-    push rax
-    call is_doubled
-    pop rax
-    test al, al
-    jz .pawn_loop_next
-    ; It is doubled. Apply a penalty.
-    cmp rsi, 0
-    je .sub_doubled_penalty
-    add rax, 10
-    jmp .pawn_loop_next
-.sub_doubled_penalty:
-    sub rax, 10
+    ; 5. King
+    call .find_king_attacker
+    cmp rax, -1
+    jne .lva_found
 
-.pawn_loop_next:
-    inc rcx
-    jmp .pawn_loop
+    ; No attacker found
+    mov rax, -1
 
-.pawn_eval_done:
-    pop r8; pop rdi; pop rsi; pop rdx; pop rcx; pop rbx
+.lva_found:
+    pop r9; pop r8; pop rsi; pop rdi
     ret
 
-; --- Pawn Helper Functions ---
-is_isolated: ; (rdi: square, rsi: color) -> rax (1 if isolated)
+; --- Helper functions for get_least_valuable_attacker ---
+
+.find_pawn_attacker:
+    ; Checks for pawn attackers. r8=target_sq, r9b=attacker_color
+    push rbx; push rcx;
+    movzx ecx, r9b ; attacker_color
+    xor ecx, 8     ; opponent_color (the color of the pawn being attacked)
+    cmp cl, 0
+    jne .check_black_pawn_attackers ; If opponent is not white, attackers must be black
+
+    ; Attacker is Black, victim is White. Black pawns attack from NW/NE (+7, +9)
+    mov rax, r8; add rax, 7; call .check_pawn_at_square
+    cmp rax, -1; jne .pawn_exit
+    mov rax, r8; add rax, 9; call .check_pawn_at_square
+    jmp .pawn_exit
+
+.check_black_pawn_attackers:
+    ; Attacker is White, victim is Black. White pawns attack from SW/SE (-9, -7)
+    mov rax, r8; sub rax, 9; call .check_pawn_at_square
+    cmp rax, -1; jne .pawn_exit
+    mov rax, r8; sub rax, 7; call .check_pawn_at_square
+
+.pawn_exit:
+    pop rcx; pop rbx
+    ret
+
+.check_pawn_at_square: ; rax=potential_sq, r8=target_sq, r9b=attacker_color
+    push rbx
+    mov rbx, rax ; Save potential square
+    cmp rbx, 0; jl .pawn_fail
+    cmp rbx, 64; jge .pawn_fail
+    mov rax, r8
+    call is_move_on_board ; check for wrap-around
+    test al, al
+    jz .pawn_fail
+    movzx rax, byte [board + rbx]
+    mov cl, r9b; or cl, W_PAWN
+    cmp al, cl
+    jne .pawn_fail
+    mov rax, rbx ; Success! Return the square of the attacking pawn
+    jmp .pawn_return
+.pawn_fail:
+    mov rax, -1
+.pawn_return:
+    pop rbx
+    ret
+
+.find_knight_attacker:
+    ; r8=target_sq, r9b=attacker_color
     push rbx; push rcx; push rdx
-    mov rax, rdi; xor rdx, rdx; mov rbx, 8; div rbx; mov rbx, rdx ; rbx = file
-    ; Check file-1
-    cmp rbx, 0; je .check_file_plus_1
-    mov rcx, rbx; dec rcx
-    call has_friendly_pawn_on_file
-    test al, al; jnz .not_isolated
-.check_file_plus_1:
-    ; Check file+1
-    cmp rbx, 7; je .is_isolated_true
-    mov rcx, rbx; inc rcx
-    call has_friendly_pawn_on_file
-    test al, al; jnz .not_isolated
-.is_isolated_true:
-    mov rax, 1; jmp .iso_done
-.not_isolated:
-    xor rax, rax
-.iso_done:
+    mov rdx, knight_offsets; mov rcx, 8
+.knight_loop:
+    movsx rbx, byte [rdx]
+    add rbx, r8
+    cmp rbx, 0; jl .next_knight
+    cmp rbx, 64; jge .next_knight
+    mov rax, r8
+    call is_move_on_board; test al, al; jz .next_knight
+    movzx rax, byte [board + rbx]
+    mov cl, r9b; or cl, W_KNIGHT
+    cmp al, cl
+    jne .next_knight
+    mov rax, rbx; jmp .knight_exit
+.next_knight:
+    inc rdx; dec rcx; jnz .knight_loop
+    mov rax, -1
+.knight_exit:
     pop rdx; pop rcx; pop rbx
     ret
 
-is_doubled: ; (rdi: square, rsi: color) -> rax (1 if doubled)
+.find_sliding_attacker: ; rdi=piece_type (W_BISHOP/W_ROOK), r8=target, r9b=color
+    push rbx; push rcx; push rdx; push r10; push r11; push r12
+    mov r10, rdi ; r10b = piece type
+    mov r11, r8  ; r11 = target square
+    mov r12b, r9b ; r12b = attacker color
+    cmp r10b, W_BISHOP
+    je .slide_bishop
+    mov rdx, rook_offsets; mov rcx, 4; jmp .slide_loop
+.slide_bishop:
+    mov rdx, bishop_offsets; mov rcx, 4
+.slide_loop:
+    movsx rbx, byte [rdx]
+    mov rax, r11
+.ray_loop:
+    add rax, rbx
+    cmp rax, 0; jl .next_direction
+    cmp rax, 64; jge .next_direction
+    mov rdi, rax; sub rdi, rbx; push rbx; mov rbx, rax; mov rax, rdi;
+    call is_move_on_board; pop rbx; test al, al; jz .next_direction
+    movzx rdi, byte [board + rax]
+    cmp rdi, EMPTY; je .ray_loop ; Empty, continue sliding
+    mov cl, r12b; and dil, COLOR_MASK; cmp dil, cl; jne .next_direction ; Blocked by friendly piece
+    movzx rdi, byte [board + rax]; and rdi, PIECE_MASK
+    cmp dil, r10b; je .found_attacker
+    cmp dil, W_QUEEN; je .found_attacker
+    jmp .next_direction ; Blocked by other enemy piece
+.next_direction:
+    inc rdx; dec rcx; jnz .slide_loop
+    mov rax, -1; jmp .slide_exit
+.found_attacker:
+    ; rax already holds the attacker's square
+.slide_exit:
+    pop r12; pop r11; pop r10; pop rdx; pop rcx; pop rbx
+    ret
+
+.find_king_attacker:
     push rbx; push rcx; push rdx
-    mov rax, rdi; xor rdx, rdx; mov rbx, 8; div rbx; mov rcx, rdx ; rcx = file
-    call has_friendly_pawn_on_file
+    mov rdx, king_offsets; mov rcx, 8
+.king_loop:
+    movsx rbx, byte [rdx]
+    add rbx, r8
+    cmp rbx, 0; jl .next_king
+    cmp rbx, 64; jge .next_king
+    mov rax, r8
+    call is_move_on_board; test al, al; jz .next_king
+    movzx rax, byte [board + rbx]
+    mov cl, r9b; or cl, W_KING
+    cmp al, cl
+    jne .next_king
+    mov rax, rbx; jmp .king_exit
+.next_king:
+    inc rdx; dec rcx; jnz .king_loop
+    mov rax, -1
+.king_exit:
     pop rdx; pop rcx; pop rbx
     ret
 
-has_friendly_pawn_on_file: ; (rcx: file, rsi: color) -> rax (1 if found > 1)
-    push rbx; push rdx; push r8
-    mov r8, 0 ; pawn_count
-    mov rdx, 0 ; rank
-.rank_scan_loop:
-    cmp rdx, 8; jge .scan_done
-    mov rax, rdx; mov rbx, 8; mul rbx; add rax, rcx ; square
-    movzx rbx, byte [board+rax]
-    cmp rbx, EMPTY; je .scan_next_rank
-    mov bl, bh; and rbx, COLOR_MASK
-    cmp rbx, rsi; jne .scan_next_rank ; Not our color
-    movzx rbx, byte [board+rax]; and rbx, PIECE_MASK
-    cmp rbx, W_PAWN; jne .scan_next_rank ; Not a pawn
-    inc r8
-.scan_next_rank:
-    inc rdx
-    jmp .rank_scan_loop
-.scan_done:
-    cmp r8, 1; jg .found_doubled
-    xor rax, rax; jmp .hfpof_done
-.found_doubled:
-    mov rax, 1
-.hfpof_done:
-    pop r8; pop rdx; pop rbx
+; Checks if a square is attacked by the side that is NOT currently to move.
+is_square_attacked_by_opponent:
+    push rdi; push rsi      ; Stow the old gear
+
+    ; --- Find the Enemy's Colors ---
+    mov al, [side_to_move]
+    xor al, 8               ; Flip the flag to the opponent's color
+    mov sil, al             ; Load the enemy colors into rsi
+
+    ; --- Send the Lookout Up the Mast ---
+    ; rdi already holds the target square
+    call is_square_attacked ; Call our seasoned trusty lookout
+
+    pop rsi; pop rdi         ; Back to yer stations!
     ret
+
 
 ; Adds bonuses for pawn shields and penalties for open files near the king.
 evaluate_king_safety:
@@ -1861,87 +2100,80 @@ generate_sliding_moves:
     pop r13; pop r12; pop r11; pop r10; pop r9; pop r8; ret
 
 make_move:
-    movzx r8, byte [r10] ; from
-    movzx r9, byte [r10+1] ; to
+    movzx r8, byte [r10]
+    movzx r9, byte [r10+1]
     push r8; push r9
 
-    movzx rax, byte [board+r9]; push rax ; Save captured piece (or EMPTY)
-    movzx rax, byte [board+r8]; push rax ; Save original moving piece
+    movzx rax, byte [board+r9]; push rax
+    movzx rax, byte [board+r8]; push rax
+    mov al, [castling_rights]; push rax
+    mov al, [en_passant_square]; push rax
 
-    movzx rax, byte [en_passant_square]; push rax ; Save old EP square
-    movzx rax, byte [castling_rights]; push rax ; Save old castle rights
+    mov byte [en_passant_square], -1
+    movzx ecx, byte [board+r8]
+    and ecx, PIECE_MASK
+    cmp ecx, W_PAWN
+    jne .update_castling_rights
+    mov ecx, r9
+    sub ecx, r8
+    cmp ecx, 16
+    je .set_white_ep
+    cmp ecx, -16
+    je .set_black_ep
+    jmp .update_castling_rights
+.set_white_ep:
+    mov al, r8b; add al, 8; mov [en_passant_square], al; jmp .update_castling_rights
+.set_black_ep:
+    mov al, r8b; sub al, 8; mov [en_passant_square], al;
 
-    ; Clear old en passant square *before* checking for a new one
-    mov byte [en_passant_square], 0
-
-    ; Update castling rights if a king or rook moves
-    mov cl, al ; copy of old rights in cl
-    cmp r8, 4; jne .check_h1; and cl, ~(W_OO_RIGHT | W_OOO_RIGHT)
-.check_h1:
-    cmp r8, 7; jne .check_a1; and cl, ~W_OO_RIGHT
-.check_a1:
-    cmp r8, 0; jne .check_e8; and cl, ~W_OOO_RIGHT
+.update_castling_rights:
+    mov r11b, [castling_rights]
+    cmp r8, 4; jne .check_e8; and r11, ~3
 .check_e8:
-    cmp r8, 60; jne .check_h8; and cl, ~(B_OO_RIGHT | B_OOO_RIGHT)
-.check_h8:
-    cmp r8, 63; jne .check_a8; and cl, ~B_OO_RIGHT
+    cmp r8, 60; jne .check_rooks; and r11, ~12
+.check_rooks:
+    cmp r8, 0; jne .check_h1; and r11, ~2
+.check_h1:
+    cmp r8, 7; jne .check_a8; and r11, ~1
 .check_a8:
-    cmp r8, 56; jne .done_castling_update; and cl, ~B_OOO_RIGHT
-.done_castling_update:
-    mov [castling_rights], cl
+    cmp r8, 56; jne .check_h8; and r11, ~8
+.check_h8:
+    cmp r8, 63; jne .rights_updated; and r11, ~4
+.rights_updated:
+    mov [castling_rights], r11b
 
-    movzx rbx, byte [board+r8] ; get the piece that is moving
-    mov cl, bl
+    pop rax
+    cmp r9b, al
+    jne .normal_capture
+    movzx ecx, byte [board+r8]
+    and ecx, PIECE_MASK
+    cmp ecx, W_PAWN
+    jne .normal_capture
+    cmp byte [side_to_move], 0
+    je .remove_black_pawn
+    mov cl, r9b; add cl, 8; mov byte [board+cl], EMPTY; jmp .move_piece
+.remove_black_pawn:
+    mov cl, r9b; sub cl, 8; mov byte [board+cl], EMPTY; jmp .move_piece
+.normal_capture:
+
+.move_piece:
+    mov cl, byte [board+r8]
     mov byte [board+r9], cl
     mov byte [board+r8], EMPTY
 
+    movzx rax, byte [r10+3]; test rax, rax; jz .check_promotion
+    cmp r9, 6; je .move_h1_rook; cmp r9, 2; je .move_a1_rook
+    cmp r9, 62; je .move_h8_rook; cmp r9, 58; je .move_a8_rook
+    jmp .check_promotion
+.move_h1_rook: mov cl, [board+7]; mov [board+5], cl; mov byte [board+7], EMPTY; jmp .check_promotion
+.move_a1_rook: mov cl, [board+0]; mov [board+3], cl; mov byte [board+0], EMPTY; jmp .check_promotion
+.move_h8_rook: mov cl, [board+63]; mov [board+61], cl; mov byte [board+63], EMPTY; jmp .check_promotion
+.move_a8_rook: mov cl, [board+56]; mov [board+59], cl; mov byte [board+56], EMPTY;
 
-    ; 1. En Passant Capture (remove the captured pawn)
-    movzx ecx, byte [r10+2] ; Check the move flag
-    cmp cl, 1 ; Is this an EP capture move?
-    jne .check_pawn_double_push
-    movzx ecx, byte [side_to_move] ; Who is moving?
-    test cl, cl ; If white moved, captured black pawn is at to+8
-    jz .ep_white_moved
-    mov byte [board+r9+8], EMPTY ; Remove black pawn
-    jmp .check_castle_rook_move
-.ep_white_moved:
-    mov byte [board+r9-8], EMPTY ; Remove white pawn
-    jmp .check_castle_rook_move
-
-    ; 2. Pawn Double Push (creates a new en passant square)
-.check_pawn_double_push:
-    cmp bl, W_PAWN ; Was it a white pawn?
-    je .check_w_pawn_push
-    cmp bl, B_PAWN ; Was it a black pawn?
-    jne .check_castle_rook_move
-    ; It was a black pawn. Was it a double push?
-    cmp r8, r9+16 ; from == to+16? (e.g., d7 -> d5)
-    jne .check_castle_rook_move
-    mov byte [en_passant_square], r9+8 ; Set EP square (d6)
-    jmp .check_castle_rook_move
-.check_w_pawn_push:
-    ; It was a white pawn. Was it a double push?
-    cmp r8, r9-16 ; from == to-16? (e.g., e2 -> e4)
-    jne .check_castle_rook_move
-    mov byte [en_passant_square], r9-8 ; Set EP square (e3)
-
-    ; 3. Castling (move the rook)
-.check_castle_rook_move:
-    cmp r8, 4; jne .check_w_ooo; cmp r9, 6; jne .check_w_ooo; mov al, [board+7]; mov byte [board+5], al; mov byte [board+7], EMPTY
-.check_w_ooo:
-    cmp r8, 4; jne .check_b_oo; cmp r9, 2; jne .check_b_oo; mov al, [board+0]; mov byte [board+3], al; mov byte [board+0], EMPTY
-.check_b_oo:
-    cmp r8, 60; jne .check_b_ooo; cmp r9, 62; jne .check_b_ooo; mov al, [board+63]; mov byte [board+61], al; mov byte [board+63], EMPTY
-.check_b_ooo:
-    cmp r8, 60; jne .no_castle_rook_move; cmp r9, 58; jne .no_castle_rook_move; mov al, [board+56]; mov byte [board+59], al; mov byte [board+56], EMPTY
-.no_castle_rook_move:
-
-    ; 4. Promotion
-    movzx rax, byte [r10+2] ; Get promotion piece/flag
-    test rax, rax; jz .no_promotion
-    cmp rax, 1; je .no_promotion ; Don't promote if it was an EP flag
+.check_promotion:
+    movzx rax, byte [r10+2]; test rax, rax; jz .no_promotion
     mov byte [board+r9], al
+
 .no_promotion:
     mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
     ret
@@ -1950,40 +2182,53 @@ unmake_move:
     movzx r8, byte [r10]
     movzx r9, byte [r10+1]
 
-    ; Undo castling rook moves
-    cmp r8, 4; jne .un_w_ooo; cmp r9, 6; jne .un_w_ooo; mov al, [board+5]; mov byte [board+7], al; mov byte [board+5], EMPTY
-.un_w_ooo:
-    cmp r8, 4; jne .un_b_oo; cmp r9, 2; jne .un_b_oo; mov al, [board+3]; mov byte [board+0], al; mov byte [board+3], EMPTY
-.un_b_oo:
-    cmp r8, 60; jne .un_b_ooo; cmp r9, 62; jne .un_b_ooo; mov al, [board+61]; mov byte [board+63], al; mov byte [board+61], EMPTY
-.un_b_ooo:
-    cmp r8, 60; jne .un_no_castle; cmp r9, 58; jne .un_no_castle; mov al, [board+56]; mov byte [board+59], al; mov byte [board+59], EMPTY
-.un_no_castle:
-
-    ; Restore all state from the stack in reverse order of push
-    pop rax; mov [castling_rights], al
     pop rax; mov [en_passant_square], al
-    pop rax; mov [r8], al ; restore original moving piece
-    mov rbx, rax         ; keep a copy of the moving piece
-    pop rax; mov [r9], al ; restore captured piece (or EMPTY)
+    pop rax; mov [castling_rights], al
+    
+    mov cl, byte [board+r9]
+    mov [r8], cl
+    mov byte [board+r9], EMPTY
 
-    movzx ecx, byte [r10+2] ; check move flag
-    cmp cl, 1
-    jne .un_ep_done
-    ; It was an EP capture, so we must put the enemy pawn back
-    cmp bl, W_PAWN ; was the moving piece a white pawn?
-    jne .un_ep_black_moved
-    ; Yes, so the captured pawn was black
-    mov byte [board+r9-8], B_PAWN
-    jmp .un_ep_done
-.un_ep_black_moved:
-    ; No, the moving piece was black, so the captured pawn was white
-    mov byte [board+r9+8], W_PAWN
-.un_ep_done:
+    pop rax
+    pop rax
+    
+    cmp al, EMPTY
+    jne .restore_normal_capture
+    mov cl, [r8]
+    and cl, PIECE_MASK
+    cmp cl, W_PAWN
+    jne .restore_normal_capture
+    mov cl, r8b
+    and cl, 0x38
+    cmp cl, 0x20
+    je .maybe_ep_unmake
+    cmp cl, 0x18
+    jne .restore_normal_capture
+.maybe_ep_unmake:
+    cmp byte [side_to_move], 8
+    je .restore_black_pawn
+    mov byte [board+r9-8], W_PAWN
+    jmp .unmake_castling
+.restore_black_pawn:
+    mov byte [board+r9+8], B_PAWN
+    jmp .unmake_castling
+.restore_normal_capture:
+    mov [r9], al
+
+.unmake_castling:
+    movzx rax, byte [r10+3]; test rax, rax; jz .unmake_done
+    cmp r9, 6; je .unmove_h1_rook; cmp r9, 2; je .unmove_a1_rook
+    cmp r9, 62; je .unmove_h8_rook; cmp r9, 58; je .unmove_a8_rook
+    jmp .unmake_done
+.unmove_h1_rook: mov cl, [board+5]; mov [board+7], cl; mov byte [board+5], EMPTY; jmp .unmake_done
+.unmove_a1_rook: mov cl, [board+3]; mov [board+0], cl; mov byte [board+3], EMPTY; jmp .unmake_done
+.unmove_h8_rook: mov cl, [board+61]; mov [board+63], cl; mov byte [board+61], EMPTY; jmp .unmake_done
+.unmove_a8_rook: mov cl, [board+59]; mov [board+56], cl; mov byte [board+59], EMPTY;
+
+.unmake_done:
     mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
     pop r9; pop r8
     ret
-
 print_best_move:
     push rax; push rdi; push rsi; push rdx
     mov rax, 1; mov rdi, 1; mov rsi, bestmove_msg; mov rdx, len_bestmove_msg; syscall
