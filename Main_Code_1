@@ -1,7 +1,7 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.5.3 - The God-Slayer Chess Engine
+; AmeNoOhobari.asm - V.1.5.4 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
-; Version: 1.5.3
+; Version: 1.5.4
 ;
 ; How to Compile and Run (on Linux):
 ;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
@@ -168,7 +168,7 @@ uci_cmd_btime:      db "btime",0
 uci_cmd_winc:       db "winc",0
 uci_cmd_binc:       db "binc",0
 
-uci_response_id:    db "id name AmeNoOhobari v1.5.3",10,0
+uci_response_id:    db "id name AmeNoOhobari v1.5.4",10,0
 uci_response_author:db "id author Tonmoy-KS",10,0
 uci_response_uciok: db "uciok",10,0
 uci_response_readyok:db "readyok",10,0
@@ -393,7 +393,7 @@ negamax:
     cmp rdi, 3   ; Don't perform NMP at shallow depths
     jle .nmp_skip
 
-    call is_king_in_check
+    call is_king_in_check ; Ye Captain is under Cannon fire!
     test al, al
     jnz .nmp_skip ; Don't perform NMP if we are in check
 
@@ -525,7 +525,7 @@ jne .late_move_search_setup
     inc r15
     jmp .move_loop_negamax
 
-.illegal_move:
+.illegal_move: ; ye don't know what to do!
     call unmake_move
     jmp .next_move_negamax
 
@@ -679,7 +679,7 @@ score_moves:
 .next_move: add r10, 4; inc r12; jmp .scoring_loop
 .scoring_done: pop r13; pop r12; ret
 
-static_exchange_evaluation:
+static_exchange_evaluation: ; ARRR! This is a landlubber From stockfish! I will make this walk to plank later!
     push rbx; push rcx; push rdx; push rsi; push rdi; push r12; push r13; push r14; push r15
     sub rsp, 32 
     mov r12, rsp
@@ -1016,7 +1016,7 @@ get_least_valuable_attacker:
     pop rbx
     ret
 
-.find_knight_attacker:
+.find_knight_attacker: ; ARRR! Horse in the sea!
     ; r8=target_sq, r9b=attacker_color
     push rbx; push rcx; push rdx
     mov rdx, knight_offsets; mov rcx, 8
@@ -1322,7 +1322,7 @@ is_passed:
     ret
 
 ; Adds bonuses for rooks on open files and on the 7th rank.
-evaluate_rooks:
+evaluate_rooks: ; If Ship on 7th sea, Engine give treasure
     push rbx; push rcx; push rdi
     xor rax, rax ; score = 0
     mov rcx, 0   ; square_index
