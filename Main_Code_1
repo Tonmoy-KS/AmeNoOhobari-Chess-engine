@@ -1,5 +1,5 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.2.4 - The God-Slayer
+; AmeNoOhobari.asm - V.1.4.3 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
 ; Version: 1.2.4
 ;
@@ -12,897 +12,459 @@
 ; ============================================================================
 
 section .data
-; --- Piece Constants (Bit 3 = Color: 0=White, 1=Black) ---
-EMPTY      equ 0
-W_PAWN     equ 1
-W_KNIGHT   equ 2
-W_BISHOP   equ 3
-W_ROOK     equ 4
-W_QUEEN    equ 5
-W_KING     equ 6
-B_PAWN     equ 9
-B_KNIGHT   equ 10
-B_BISHOP   equ 11
-B_ROOK     equ 12
-B_QUEEN    equ 13
-B_KING     equ 14
+EMPTY       equ 0; W_PAWN      equ 1; W_KNIGHT    equ 2; W_BISHOP    equ 3; W_ROOK      equ 4; W_QUEEN     equ 5; W_KING      equ 6
+B_PAWN      equ 9; B_KNIGHT    equ 10; B_BISHOP    equ 11; B_ROOK      equ 12; B_QUEEN     equ 13; B_KING      equ 14
+PIECE_MASK  equ 7; COLOR_MASK  equ 8
 
-PIECE_MASK equ 7  ; 0b0111
-COLOR_MASK equ 8  ; 0b1000
-
-; --- Initial Board Setup (Standard Chess Position) ---
-initial_board:
-    db B_ROOK, B_KNIGHT, B_BISHOP, B_QUEEN, B_KING, B_BISHOP, B_KNIGHT, B_ROOK
-    db B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN
-    db EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY
-    db EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY
-    db EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY
-    db EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY
-    db W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN
-    db W_ROOK, W_KNIGHT, W_BISHOP, W_QUEEN, W_KING, W_BISHOP, W_KNIGHT, W_ROOK
-
-; --- Evaluation Data ---
-piece_values: dw 0, 100, 320, 330, 500, 900, 10000 ; EMPTY, P, N, B, R, Q, K
-
-pawn_pst:
-    db   0,   0,   0,   0,   0,   0,   0,   0
-    db  50,  50,  50,  50,  50,  50,  50,  50
-    db  10,  10,  20,  30,  30,  20,  10,  10
-    db   5,   5,  10,  25,  25,  10,   5,   5
-    db   0,   0,   0,  20,  20,   0,   0,   0
-    db   5,  -5, -10,   0,   0, -10,  -5,   5
-    db   5,  10,  10, -20, -20,  10,  10,   5
-    db   0,   0,   0,   0,   0,   0,   0,   0
-knight_pst:
-    db -50, -40, -30, -30, -30, -30, -40, -50
-    db -40, -20,   0,   0,   0,   0, -20, -40
-    db -30,   0,  10,  15,  15,  10,   0, -30
-    db -30,   5,  15,  20,  20,  15,   5, -30
-    db -30,   0,  15,  20,  20,  15,   0, -30
-    db -30,   5,  10,  15,  15,  10,   5, -30
-    db -40, -20,   0,   5,   5,   0, -20, -40
-    db -50, -40, -30, -30, -30, -30, -40, -50
-bishop_pst:
-    db -20, -10, -10, -10, -10, -10, -10, -20
-    db -10,   0,   0,   0,   0,   0,   0, -10
-    db -10,   0,   5,  10,  10,   5,   0, -10
-    db -10,   5,   5,  10,  10,   5,   5, -10
-    db -10,   0,  10,  10,  10,  10,   0, -10
-    db -10,  10,  10,  10,  10,  10,  10, -10
-    db -10,   5,   0,   0,   0,   0,   5, -10
-    db -20, -10, -10, -10, -10, -10, -10, -20
-rook_pst:
-    db   0,   0,   0,   0,   0,   0,   0,   0
-    db   5,  10,  10,  10,  10,  10,  10,   5
-    db  -5,   0,   0,   0,   0,   0,   0,  -5
-    db  -5,   0,   0,   0,   0,   0,   0,  -5
-    db  -5,   0,   0,   0,   0,   0,   0,  -5
-    db  -5,   0,   0,   0,   0,   0,   0,  -5
-    db  -5,   0,   0,   0,   0,   0,   0,  -5
-    db   0,   0,   0,   5,   5,   0,   0,   0
-queen_pst:
-    db -20, -10, -10,  -5,  -5, -10, -10, -20
-    db -10,   0,   0,   0,   0,   0,   0, -10
-    db -10,   0,   5,   5,   5,   5,   0, -10
-    db  -5,   0,   5,   5,   5,   5,   0,  -5
-    db   0,   0,   5,   5,   5,   5,   0,  -5
-    db -10,   5,   5,   5,   5,   5,   0, -10
-    db -10,   0,   5,   0,   0,   0,   0, -10
-    db -20, -10, -10,  -5,  -5, -10, -10, -20
-king_pst:
-    db -30, -40, -40, -50, -50, -40, -40, -30
-    db -30, -40, -40, -50, -50, -40, -40, -30
-    db -30, -40, -40, -50, -50, -40, -40, -30
-    db -30, -40, -40, -50, -50, -40, -40, -30
-    db -20, -30, -30, -40, -40, -30, -30, -20
-    db -10, -20, -20, -20, -20, -20, -20, -10
-    db  20,  20,   0,   0,   0,   0,  20,  20
-    db  20,  30,  10,   0,   0,  10,  30,  20
-
+piece_values: dw 0, 100, 320, 330, 500, 900, 10000
+passed_pawn_bonus: dw 0, 10, 30, 50, 75, 100, 150, 0
 pst_pointers: dq pawn_pst, knight_pst, bishop_pst, rook_pst, queen_pst, king_pst
 
-; --- Move Generation Data ---
 knight_offsets: db -17, -15, -10, -6, 6, 10, 15, 17
 bishop_offsets: db -9, -7, 7, 9
 rook_offsets:   db -8, -1, 1, 8
 king_offsets:   db -9, -8, -7, -1, 1, 7, 8, 9
 
-; --- Move Ordering Data ---
-MVV_LVA_BONUS   equ 1000000
+pawn_pst:
+    db   0,   0,   0,   0,   0,   0,   0,   0,  50,  50,  50,  50,  50,  50,  50,  50
+    db  10,  10,  20,  30,  30,  20,  10,  10,   5,   5,  10,  25,  25,  10,   5,   5
+    db   0,   0,   0,  20,  20,   0,   0,   0,   5,  -5, -10,   0,   0, -10,  -5,   5
+    db   5,  10,  10, -20, -20,  10,  10,   5,   0,   0,   0,   0,   0,   0,   0,   0
+knight_pst:
+    db -50, -40, -30, -30, -30, -30, -40, -50, -40, -20,   0,   0,   0,   0, -20, -40
+    db -30,   0,  10,  15,  15,  10,   0, -30, -30,   5,  15,  20,  20,  15,   5, -30
+    db -30,   0,  15,  20,  20,  15,   0, -30, -30,   5,  10,  15,  15,  10,   5, -30
+    db -40, -20,   0,   5,   5,   0, -20, -40, -50, -40, -30, -30, -30, -30, -40, -50
+bishop_pst:
+    db -20, -10, -10, -10, -10, -10, -10, -20, -10,   0,   0,   0,   0,   0,   0, -10
+    db -10,   0,   5,  10,  10,   5,   0, -10, -10,   5,   5,  10,  10,   5,   5, -10
+    db -10,   0,  10,  10,  10,  10,   0, -10, -10,  10,  10,  10,  10,  10,  10, -10
+    db -10,   5,   0,   0,   0,   0,   5, -10, -20, -10, -10, -10, -10, -10, -10, -20
+rook_pst:
+    db   0,   0,   0,   0,   0,   0,   0,   0,   5,  10,  10,  10,  10,  10,  10,   5
+    db  -5,   0,   0,   0,   0,   0,   0,  -5,  -5,   0,   0,   0,   0,   0,   0,  -5
+    db  -5,   0,   0,   0,   0,   0,   0,  -5,  -5,   0,   0,   0,   0,   0,   0,  -5
+    db  -5,   0,   0,   0,   0,   0,   0,  -5,   0,   0,   0,   5,   5,   0,   0,   0
+queen_pst:
+    db -20, -10, -10,  -5,  -5, -10, -10, -20, -10,   0,   0,   0,   0,   0,   0, -10
+    db -10,   0,   5,   5,   5,   5,   0, -10,  -5,   0,   5,   5,   5,   5,   0,  -5
+    db   0,   0,   5,   5,   5,   5,   0,  -5, -10,   5,   5,   5,   5,   5,   0, -10
+    db -10,   0,   5,   0,   0,   0,   0, -10, -20, -10, -10,  -5,  -5, -10, -10, -20
+king_pst:
+    db -30, -40, -40, -50, -50, -40, -40, -30, -30, -40, -40, -50, -50, -40, -40, -30
+    db -30, -40, -40, -50, -50, -40, -40, -30, -30, -40, -40, -50, -50, -40, -40, -30
+    db -20, -30, -30, -40, -40, -30, -30, -20, -10, -20, -20, -20, -20, -20, -20, -10
+    db  20,  20,   0,   0,   0,   0,  20,  20,  20,  30,  10,   0,   0,  10,  30,  20
 
-; --- Output Strings and Data ---
-bestmove_msg:      db "bestmove ", 9
-len_bestmove_msg:  equ $ - bestmove_msg
-newline:           db 10
-square_to_an:      db "a1b1c1d1e1f1g1h1a2b2c2d2e2f2g2h2a3b3c3d3e3f3g3h3a4b4c4d4e4f4g4h4a5b5c5d5e5f5g5h5a6b6c6d6e6f6g6h6a7b7c7d7e7f7g7h7a8b8c8d8e8f8g8h8"
+initial_board:
+    db B_ROOK, B_KNIGHT, B_BISHOP, B_QUEEN, B_KING, B_BISHOP, B_KNIGHT, B_ROOK
+    db B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN, B_PAWN
+    db 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+    db W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN, W_PAWN
+    db W_ROOK, W_KNIGHT, W_BISHOP, W_QUEEN, W_KING, W_BISHOP, W_KNIGHT, W_ROOK
+
+zobrist_keys:
+    piece_keys: times 64 * 12 dq 0
+    side_key: dq 0
+opening_book_path: db "book.bin", 0
+bestmove_msg: db "bestmove "
+len_bestmove_msg: equ $ - bestmove_msg
+newline: db 10
+square_to_an: db "a1b1c1d1e1f1g1h1a2b2c2d2e2f2g2h2a3b3c3d3e3f3g3h3a4b4c4d4e4f4g4h4a5b5c5d5e5f5g5h5a6b6c6d6e6f6g6h6a7b7c7d7e7f7g7h7a8b8c8d8e8f8g8h8"
+fen_pieces: db "PNBRQK  pnbrqk"
+lcg_seed: dq 123456789
 
 section .bss
-board:            resb 64
-side_to_move:     resb 1
-
-; Move list structure: 256 moves max, 4 bytes per move
-; byte 0: from_sq, byte 1: to_sq, byte 2: captured_piece, byte 3: moved_piece
-move_list:        resb 256 * 4
-move_list_end:    resq 1
-
-root_best_move:   resd 1
-nodes_searched:   resq 1
-
-; --- Heuristics and Policy Network Data ---
-move_scores:      resd 256        ; Array to store scores for moves in move_list
-killer_moves:     resd 2 * 64     ; 2 killer moves per ply, max depth 64
-history_table:    resd 64 * 64    ; [from_sq][to_sq] scores
-policy_scores:    resd 256        ; <<< NEW: Scores from the policy network
+board: resb 64
+side_to_move: resb 1
+move_list: resb 256 * 4
+move_list_end: resq 1
+root_best_move: resd 1
+nodes_searched: resq 1
+move_scores: resd 256
+opening_book: resb 16 * 1024 * 1024
+book_size: resq 1
+fen_buffer: resb 100
+best_score_prev_iter: resd 1
 
 section .text
+extern probe_syzygy_wdl_from_fen
 global _start
 
-; A simple macro to add a move to the move list
 %macro ADD_MOVE 2
     mov rdi, [move_list_end]
-    mov byte [rdi], %1      ; from square
-    mov byte [rdi+1], %2    ; to square
-    add rdi, 4
-    mov [move_list_end], rdi
+    mov byte [rdi], %1; mov byte [rdi+1], %2; add rdi, 4; mov [move_list_end], rdi
 %endmacro
 
 _start:
-    call initialize_board
-
-    ; Find the best move for the root position
-    ; RDI = depth, RSI = alpha, RDX = beta
-    mov edi, 4              ; Search depth
-    mov esi, -30000         ; Alpha
-    mov edx, 30000          ; Beta
-    call find_best_move
-
+    call initialize_engine
+    call iterative_deepening
     call print_best_move
+    mov rax, 60; xor rdi, rdi; syscall
 
-    ; Exit syscall
-    mov rax, 60
-    xor rdi, rdi
-    syscall
-
-; ============================================================================
-; Board and Game State
-; ============================================================================
-initialize_board:
-    mov rsi, initial_board
-    mov rdi, board
-    mov rcx, 64
-    rep movsb
-    mov byte [side_to_move], 0 ; 0 for White, 8 for Black
+initialize_engine:
+    call initialize_board
+    call initialize_zobrist_keys
+    call load_opening_book
     ret
 
-; ============================================================================
-; Root Search Function
-; ============================================================================
-; In: RDI=depth, RSI=alpha, RDX=beta
-find_best_move:
-    push r12
-    push r13
-    push r14
-    push r15 
+iterative_deepening:
+    mov dword [best_score_prev_iter], 0
+    mov ecx, 1
+.depth_loop:
+    cmp ecx, 6
+    jg .id_done
+    mov edx, [best_score_prev_iter]
+    mov esi, edx; sub esi, 50; add edx, 50
+    mov edi, ecx
+    call search_root
+    cmp eax, esi; jle .research_low
+    cmp eax, edx; jge .research_high
+    jmp .store_results
+.research_low:
+    mov esi, -30000; mov edi, ecx; call search_root; jmp .store_results
+.research_high:
+    mov edx, 30000; mov edi, ecx; call search_root
+.store_results:
+    mov [best_score_prev_iter], eax
+    inc ecx; jmp .depth_loop
+.id_done: ret
 
-    mov r12d, esi           ; Save alpha
-    mov r13d, edx           ; Save beta
-    mov r15, rdi            ; Save initial depth in r15
-    mov dword [root_best_move], 0
+search_root:
+    push r12; push r13; push r14; push r15
+    mov r12d, esi; mov r13d, edx; mov r15, rdi; mov dword [root_best_move], 0
     mov qword [nodes_searched], 0
-
-    call generate_moves
-    mov r14, r15            ; Pass current depth to score_moves
-    call score_moves
-
-    mov r11, 0              ; r11 = number of moves searched
-    mov r9d, -30001         ; Best score found so far, init to -infinity
-
+    call generate_moves; call score_moves
+    mov r11, 0; mov r9d, -30001
 .move_loop:
-    ; Have we searched all moves?
-    mov r10, [move_list_end]
-    sub r10, move_list
-    shr r10, 2               
-    cmp r11, r10
+    mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r11, r10
     jge .done_searching
-
-    call find_next_best_move 
-
-    movzx r8, byte [r10]     ; from
-    movzx r9b, byte [r10+1]  ; to
+    call find_next_best_move; movzx r8, byte [r10]; movzx r9b, byte [r10+1]
     call make_move
-
-    ; First move is a full window search
-    mov rdi, r15             
-    dec rdi
-    mov rsi, r13d           ; -beta
-    neg esi
-    mov rdx, r12d           ; -alpha
-    neg edx
-    call negamax
-    neg eax
-
+    mov rdi, r15; dec rdi; mov rsi, r13d; neg esi; mov rdx, r12d; neg edx
+    call negamax; neg eax
     call unmake_move
-    inc r11                  
-
-    cmp eax, r12d
-    jle .next_move_in_loop
-
-    ; This is the best move so far
-    mov r12d, eax
-    mov cl, r8b
-    mov ch, r9b
-    mov [root_best_move], cx
-
+    inc r11
+    cmp eax, r12d; jle .next_move_in_loop
+    mov r12d, eax; mov r9d, eax; mov cl, r8b; mov ch, r9b; mov [root_best_move], cx
 .next_move_in_loop:
     jmp .move_loop
-
 .done_searching:
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    ret
+    mov eax, r9d
+    pop r15; pop r14; pop r13; pop r12; ret
 
-; ============================================================================
-; NegaMax Search with PVS, LMR, and Quiescence
-; ============================================================================
-; In: RDI=depth, RSI=alpha, RDX=beta
-; Out: RAX=score
 negamax:
-    push rbp
-    mov rbp, rsp
-    push r12
-    push r13
-    push r14
-    push r15
-    push rbx
-
+    push rbp; mov rbp, rsp; push r12; push r13; push r14; push r15; push rbx
     inc qword [nodes_searched]
-
-    ; --- Base Case: Reached depth limit, start Quiescence Search ---
-    cmp rdi, 0
-    je .quiescence_search_entry
-
-    mov r12d, esi           ; alpha
-    mov r13d, edx           ; beta
-    mov r14, rdi            ; depth
-    mov rbx, 0              ; move_count
-
-    call generate_moves
-    call score_moves        
-
-    mov r15, 0              ; r15 = number of moves searched
-    mov r8d, -30001         ; best score so far, initialized to -infinity
-
+    cmp rdi, 0; je .quiescence_search_entry
+    mov r12d, esi; mov r13d, edx; mov r14, rdi; mov rbx, 0
+    call generate_moves; call score_moves
+    mov r15, 0; mov r8d, -30001
 .move_loop_negamax:
-    ; Have we searched all moves?
-    mov r10, [move_list_end]
-    sub r10, move_list
-    shr r10, 2
-    cmp r15, r10
+    mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r15, r10
     jge .done_searching_negamax
-
-    call find_next_best_move 
-    mov r9, rax              ; Save index for heuristic updates
-
-    movzx ecx, byte[r10]
-    movzx edx, byte[r10+1]
+    call find_next_best_move
+    movzx ecx, byte[r10]; movzx edx, byte[r10+1]
     call make_move
-    
-    ; --- PVS and LMR  ---
-    mov rdi, r14
-    dec rdi
-    
-    ; Late Move Reduction: reduce depth for later moves
-    cmp r15, 3 ; only reduce after the first 3 moves
-    jle .no_reduction
-    sub rdi, 1
-.no_reduction:
-
-    ; PVS: If not the first move, do a null-window search
-    cmp r15, 0
-    je .full_window_search
-
-.null_window_search:
-    mov esi, r12d   ; alpha
-    neg esi
-    dec esi         ; new beta = -alpha
-    mov edx, esi
-    inc edx         ; new alpha = -alpha-1
-    call negamax
-    neg eax
-    
-    ; if fail high, re-search with full window
-    cmp eax, r12d
-    jle .store_score
-    cmp eax, r13d
-    jge .store_score
-
+    mov rdi, r14; dec rdi
+    call is_square_attacked_by_opponent
+    test al, al; jz .no_extension; inc rdi
+.no_extension:
+    cmp r15, 0; je .full_window_search
+    mov esi, r12d; neg esi; dec esi; mov edx, esi; inc edx
+    call negamax; neg eax
+    cmp eax, r12d; jle .store_score; cmp eax, r13d; jge .store_score
 .full_window_search:
-    mov esi, r13d   ; -beta
-    neg esi
-    mov edx, r12d   ; -alpha
-    neg edx
-    call negamax
-    neg eax
-
+    mov esi, r13d; neg esi; mov edx, r12d; neg edx
+    call negamax; neg eax
 .store_score:
     call unmake_move
-    inc r15
-
-    ; --- Alpha-Beta Pruning Logic ---
-    cmp eax, r8d
-    jle .next_move_negamax ; if score <= best_score, continue
-    
-    mov r8d, eax ; Update best score
-    mov r12d, eax ; Update alpha
-
-    cmp r12d, r13d
-    jge .beta_cutoff
-
+    cmp eax, r8d; jle .next_move_negamax
+    mov r8d, eax; mov r12d, eax
+    cmp r12d, r13d; jge .beta_cutoff
 .next_move_negamax:
-    jmp .move_loop_negamax
+    inc r15; jmp .move_loop_negamax
+.beta_cutoff: jmp .done_searching_negamax
+.quiescence_search_entry: call quiescence_search; jmp .exit
+.done_searching_negamax: mov eax, r8d
+.exit: pop rbx; pop r15; pop r14; pop r13; pop r12; mov rsp, rbp; pop rbp; ret
 
-.beta_cutoff:
-    ; (Heuristic update logic for quiet moves goes here, as before)
-    jmp .done_searching_negamax
-
-.quiescence_search_entry:
-    call quiescence_search
-    jmp .exit
-
-.done_searching_negamax:
-    mov eax, r8d
-    
-.exit:
-    pop rbx
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    mov rsp, rbp
-    pop rbp
-    ret
-
-; ============================================================================
-; Quiescence Search
-; ============================================================================
-; In: RDI=depth(ignored), RSI=alpha, RDX=beta
-; Out: RAX=score
 quiescence_search:
-    push rbp
-    mov rbp, rsp
-    push r12
-    push r13
-    push r14
-    push r15
-
+    push rbp; mov rbp, rsp; push r12; push r13; push r14; push r15
     inc qword [nodes_searched]
-
-    ; Stand-pat score
     call evaluate
-    cmp byte [side_to_move], 0
-    jne .negate_eval
+    cmp byte [side_to_move], 0; jne .negate_eval
 .continue_eval:
-    
-    ; if eval >= beta, return beta (fail-soft)
-    cmp eax, edx
-    jge .q_return_beta
-
-    ; alpha = max(alpha, eval)
-    cmp eax, esi
-    jle .alpha_ok
-    mov esi, eax
+    cmp eax, edx; jge .q_return_beta
+    cmp eax, esi; jle .alpha_ok; mov esi, eax
 .alpha_ok:
-    
-    mov r12d, esi   ; alpha
-    mov r13d, edx   ; beta
-    mov r14d, eax   ; best_score = eval
-    
-    ; --- Generate only tactical moves (captures, promotions) ---
-    call generate_tactical_moves 
-    call score_moves
-
-    mov r15, 0 ; moves searched
-
+    mov r12d, esi; mov r13d, edx; mov r14d, eax
+    call generate_tactical_moves; call score_moves
+    mov r15, 0
 .q_move_loop:
-    mov r10, [move_list_end]
-    sub r10, move_list
-    shr r10, 2
-    cmp r15, r10
+    mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r15, r10
     jge .q_done
-
     call find_next_best_move
-
-    movzx ecx, byte [r10]
-    movzx edx, byte [r10+1]
+    movzx ecx, byte [r10]; movzx edx, byte [r10+1]
     call make_move
+    mov rdi, 0; mov esi, r13d; neg esi; mov edx, r12d; neg edx
+    call quiescence_search; neg eax
+    call unmake_move; inc r15
+    cmp eax, r14d; jle .q_next_move; mov r14d, eax
+    cmp eax, r12d; jle .q_next_move; mov r12d, eax
+    cmp r12d, r13d; jge .q_beta_cutoff
+.q_next_move: jmp .q_move_loop
+.negate_eval: neg eax; jmp .continue_eval
+.q_beta_cutoff: mov eax, r13d; jmp .q_exit
+.q_return_beta: mov eax, edx; jmp .q_exit
+.q_done: mov eax, r14d
+.q_exit: pop r15; pop r14; pop r13; pop r12; mov rsp, rbp; pop rbp; ret
 
-    ; Recursive call to quiescence
-    mov rdi, 0 ; depth is not used but pass 0
-    mov esi, r13d ; -beta
-    neg esi
-    mov edx, r12d ; -alpha
-    neg edx
-    call quiescence_search
-    neg eax
-
-    call unmake_move
-    inc r15
-    
-    cmp eax, r14d
-    jle .q_next_move
-    mov r14d, eax ; new best score
-
-    cmp eax, r12d
-    jle .q_next_move
-    mov r12d, eax ; new alpha
-    
-    cmp r12d, r13d
-    jge .q_beta_cutoff
-
-.q_next_move:
-    jmp .q_move_loop
-    
-.negate_eval:
-    neg eax
-    jmp .continue_eval
-
-.q_beta_cutoff:
-    mov eax, r13d
-    jmp .q_exit
-
-.q_return_beta:
-    mov eax, edx
-    jmp .q_exit
-
-.q_done:
-    mov eax, r14d
-
-.q_exit:
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    mov rsp, rbp
-    pop rbp
-    ret
-    
-; ============================================================================
-; Evaluation Function
-; ============================================================================
 evaluate:
-    ; This function remains unchanged
-    push rbx
-    push rcx
-    push rsi
-    push rdi
+    push rbx; push rcx; push rsi; push rdi
     xor eax, eax
+    call evaluate_pawns; add eax, edx
+    call evaluate_king_safety; add eax, edx
+    call evaluate_rooks; add eax, edx
     mov rcx, 0
 .eval_loop:
-    cmp rcx, 64
-    jge .eval_done
-    movzx rbx, byte [board + rcx]
-    cmp rbx, EMPTY
-    je .next_square
-    mov rdi, rbx
-    and rdi, COLOR_MASK
-    and rbx, PIECE_MASK
+    cmp rcx, 64; jge .eval_done
+    movzx rbx, byte [board + rcx]; cmp rbx, EMPTY; je .next_square
+    mov rdi, rbx; and rdi, COLOR_MASK; and rbx, PIECE_MASK
     movsx rdx, word [piece_values - 2 + rbx*2]
     mov rsi, [pst_pointers - 8 + rbx*8]
-    cmp rdi, 0
-    je .is_white_pst
-    mov r8, 63
-    sub r8, rcx
-    movsx r9, byte [rsi + r8]
-    neg r9
-    add rdx, r9
-    jmp .add_to_score
-.is_white_pst:
-    movsx r9, byte [rsi + rcx]
-    add rdx, r9
-.add_to_score:
-    cmp rdi, 0
-    je .add_val
-    sub eax, edx
-    jmp .next_square
-.add_val:
-    add eax, edx
-.next_square:
-    inc rcx
-    jmp .eval_loop
-.eval_done:
-    pop rdi
-    pop rsi
-    pop rcx
-    pop rbx
-    ret
+    cmp rdi, 0; je .is_white_pst
+    mov r8, 63; sub r8, rcx; movsx r9, byte [rsi + r8]; neg r9; add rdx, r9; jmp .add_to_score
+.is_white_pst: movsx r9, byte [rsi + rcx]; add rdx, r9
+.add_to_score: cmp rdi, 0; je .add_val; sub eax, edx; jmp .next_square
+.add_val: add eax, edx
+.next_square: inc rcx; jmp .eval_loop
+.eval_done: pop rdi; pop rsi; pop rcx; pop rbx; ret
 
-; ============================================================================
-; Move Ordering & Policy Network Hook
-; ============================================================================
 score_moves:
-    push r12
-    push r13
-    
-    ; <<< NEW: Hook for Policy Network >>>
-    ; This is where you would call your CNN inference function.
-    ; It should populate the `policy_scores` array.
-    call evaluate_with_policy_network
-
-    mov r10, move_list
-    mov r12, 0
-
+    push r12; push r13; mov r10, move_list; mov r12, 0
 .scoring_loop:
-    cmp r10, [move_list_end]
-    jge .scoring_done
-
-    movzx ecx, byte [r10]
-    movzx edx, byte [r10+1]
-    movzx eax, byte [board+rdx]
-    movzx ebx, byte [board+rcx]
-
-    ; Start with the policy score
-    mov eax, [policy_scores + r12*4]
-    mov [move_scores + r12*4], eax
-
-    ; --- 1. Score Captures using MVV-LVA ---
-    movzx eax, byte [board+rdx]
-    cmp eax, EMPTY
-    jne .is_capture
-
-    ; --- 2. Score Quiet Moves ---
-    ; (Killer and History logic remains the same)
-    mov rsi, r14
-    shl rsi, 3
-    mov r8d, [killer_moves + rsi]
-    mov r9d, [killer_moves + rsi + 4]
-    mov r11d, edx
-    shl r11d, 8
-    or r11d, ecx
-    cmp r11d, r8d
-    je .is_killer
-    cmp r11d, r9d
-    je .is_killer
-
-    ; Add history score to policy score
-    mov edi, ecx
-    mov esi, edx
-    imul edi, 64
-    add edi, esi
-    add [move_scores + r12*4], dword [history_table + rdi*4]
-    jmp .next_move
-
-.is_killer:
-    add dword [move_scores + r12*4], 900000
-    jmp .next_move
-
+    cmp r10, [move_list_end]; jge .scoring_done
+    movzx ecx, byte [r10]; movzx edx, byte [r10+1]; movzx eax, byte [board+rdx]
+    cmp eax, EMPTY; jne .is_capture
+    mov dword [move_scores + r12*4], 0; jmp .next_move
 .is_capture:
-    mov edi, MVV_LVA_BONUS
+    mov r8, rcx; mov r9, rdx
+    call static_exchange_evaluation; add eax, 1000000
+    mov [move_scores + r12*4], eax
+.next_move: add r10, 4; inc r12; jmp .scoring_loop
+.scoring_done: pop r13; pop r12; ret
+
+static_exchange_evaluation:
+    push rbx; push rcx; push rdx; push rsi; push rdi; push r12; push r13; push r14; push r15
+    sub rsp, 32 ; gain_list[16]
+    mov r12, rsp ; gain_list pointer
+    mov r13d, [piece_values + W_KING*2] ; King value for comparison
+    mov r14, r8 ; from_sq
+    mov r15, r9 ; to_sq
+    mov r11d, 0 ; see score
+    movzx eax, byte [board + r15]
     and eax, PIECE_MASK
-    movsx eax, word [piece_values - 2 + rax*2]
-    and ebx, PIECE_MASK
-    movsx ebx, word [piece_values - 2 + rbx*2]
-    add edi, eax
-    sub edi, ebx
-    add [move_scores + r12*4], edi ; Add MVV-LVA score to policy score
-
-.next_move:
-    add r10, 4
-    inc r12
-    jmp .scoring_loop
-
-.scoring_done:
-    pop r13
-    pop r12
+    movsx eax, word [piece_values - 2 + eax*2]
+    mov [r12], ax
+    mov edi, 1
+.see_loop:
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    mov rsi, r15 ; target
+    mov dl, [side_to_move]
+    call get_least_valuable_attacker
+    cmp rax, -1
+    je .see_done
+    mov r14, rax
+    movzx ecx, byte [board+r14]
+    and ecx, PIECE_MASK
+    movsx ecx, word [piece_values - 2 + ecx*2]
+    mov [r12 + edi*2], cx
+    inc edi
+    ; Conceptually make the move
+    mov cl, [board+r14]
+    mov byte [board+r15], cl
+    mov byte [board+r14], EMPTY
+    jmp .see_loop
+.see_done:
+    ; Unwind and restore board
+    dec edi
+.unwind_loop:
+    cmp edi, 0
+    jle .unwind_done
+    mov cl, [board+r15]
+    mov byte [board+r14], cl
+    movzx eax, word [r12 + edi*2]
+    mov byte [board+r15], al
+    dec edi
+    jmp .unwind_loop
+.unwind_done:
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    ; Calculate score
+    movsx eax, word [r12 + 0]
+    mov ecx, 1
+.calc_see:
+    cmp ecx, edi
+    jge .final_see
+    movsx rdx, word [r12 + ecx*2]
+    sub eax, edx
+    inc ecx
+    cmp ecx, edi
+    jge .final_see
+    movsx rdx, word [r12 + ecx*2]
+    add eax, rdx
+    inc ecx
+    jmp .calc_see
+.final_see:
+    add rsp, 32
+    pop r15; pop r14; pop r13; pop r12; pop rdi; pop rsi; pop rdx; pop rcx; pop rbx
     ret
 
-; ============================================================================
-; Placeholder for Policy Network
-; ============================================================================
-evaluate_with_policy_network:
-    ; This is a placeholder function.
-    ; In a real implementation, this would:
-    ; 1. Format the board state into a tensor for the CNN.
-    ; 2. Call an external library (e.g., a C library with bindings to PyTorch/TensorFlow)
-    ;    to run inference on the trained CNN model.
-    ; 3. The CNN would output probabilities for each possible move.
-    ; 4. This function would map those probabilities to the moves in `move_list`
-    ;    and store them as integer scores in the `policy_scores` array.
-    
-    ; For now, we just zero out the policy scores.
-    mov rdi, policy_scores
-    mov rcx, 256
-    xor eax, eax
-    rep stosd
-    
+get_least_valuable_attacker: ret
+is_square_attacked: ret
+is_square_attacked_by_opponent: ret
+check_pawn_attacks: ret
+check_knight_attacks: ret
+check_sliding_attacks: ret
+evaluate_pawns: ret
+evaluate_king_safety: ret
+evaluate_rooks: ret
+is_file_open: ret
+is_passed: ret
+probe_tablebase: mov eax, 100; ret
+board_to_fen: ret
+load_opening_book: ret
+find_book_move: xor rax, rax; ret
+weighted_choice: ret
+compute_zobrist_hash: ret
+initialize_zobrist_keys:
+    mov rdi, zobrist_keys
+    mov rcx, 769 ;
+.rand_loop:
+    push rcx
+    call lcg_rand
+    mov [rdi], rax
+    add rdi, 8
+    pop rcx
+    loop .rand_loop
     ret
 
-; ============================================================================
-; find_next_best_move
-; ============================================================================
+lcg_rand:
+    mov rax, [lcg_seed]
+    mov rbx, 6364136223846793005
+    mul rbx
+    add rax, 1442695040888963407
+    mov [lcg_seed], rax
+    ret
+
 find_next_best_move:
-    push rsi
-    push rdi
-    mov ebx, -2000000000
-    mov rax, -1
-    mov rcx, 0
+    push rsi; push rdi; mov ebx, -2000000000; mov rax, -1; mov rcx, 0
 .find_loop:
-    mov rdi, [move_list_end]
-    mov rsi, move_list
-    sub rdi, rsi
-    shr rdi, 2
-    cmp rcx, rdi
-    jge .find_done
-    mov edx, [move_scores + rcx*4]
-    cmp edx, ebx
-    jle .find_next
-    mov ebx, edx
-    mov rax, rcx
-.find_next:
-    inc rcx
-    jmp .find_loop
-.find_done:
-    mov dword [move_scores + rax*4], -2000000000
-    mov r10, move_list
-    lea r10, [r10 + rax*4]
-    pop rdi
-    pop rsi
-    ret
+    mov rdi, [move_list_end]; mov rsi, move_list; sub rdi, rsi; shr rdi, 2
+    cmp rcx, rdi; jge .find_done; mov edx, [move_scores + rcx*4]; cmp edx, ebx
+    jle .find_next; mov ebx, edx; mov rax, rcx
+.find_next: inc rcx; jmp .find_loop
+.find_done: mov dword [move_scores + rax*4], -2000000000; mov r10, move_list
+    lea r10, [r10 + rax*4]; pop rdi; pop rsi; ret
 
-; ============================================================================
-; Move Generation
-; ============================================================================
-; --- NEW: generate_tactical_moves for Quiescence Search ---
 generate_tactical_moves:
-    mov rbx, move_list
-    mov [move_list_end], rbx
-    mov r11b, [side_to_move]
-    mov rcx, 0
-.gen_tactical_loop:
-    cmp rcx, 64
-    jge .gen_tactical_done
-
-    ; (Logic to generate only captures and promotions would go here)
-    ; For brevity, this example will just call the full generator.
-    ; A real implementation MUST filter for tactical moves only.
+    mov rbx, move_list; mov [move_list_end], rbx
     call generate_moves
-
-.gen_tactical_done:
     ret
 
-; --- Full move generator (unchanged) ---
 generate_moves:
-    ; This function remains unchanged
-    mov rbx, move_list
-    mov [move_list_end], rbx
-    mov r11b, [side_to_move]
-    mov rcx, 0
+    mov rbx, move_list; mov [move_list_end], rbx; mov r11b, [side_to_move]; mov rcx, 0
 .gen_loop:
-    cmp rcx, 64
-    jge .gen_done
-    movzx rdi, byte [board + rcx]
-    cmp rdi, EMPTY
-    je .next_gen_square
-    mov rsi, rdi
-    and rsi, COLOR_MASK
-    cmp sil, r11b
-    jne .next_gen_square
-    and edi, PIECE_MASK
-    cmp edi, W_PAWN
-    je .gen_pawn
-    cmp edi, W_KNIGHT
-    je .gen_knight
-    cmp edi, W_BISHOP
-    je .gen_bishop
-    cmp edi, W_ROOK
-    je .gen_rook
-    cmp edi, W_QUEEN
-    je .gen_queen
-    cmp edi, W_KING
-    je .gen_king
-    jmp .next_gen_square
-.gen_pawn:   call generate_pawn_moves; jmp .next_gen_square
+    cmp rcx, 64; jge .gen_done; movzx rdi, byte [board + rcx]; cmp rdi, EMPTY
+    je .next_gen_square; mov rsi, rdi; and rsi, COLOR_MASK; cmp sil, r11b
+    jne .next_gen_square; and edi, PIECE_MASK; cmp edi, W_PAWN; je .gen_pawn
+    cmp edi, W_KNIGHT; je .gen_knight; cmp edi, W_BISHOP; je .gen_bishop
+    cmp edi, W_ROOK; je .gen_rook; cmp edi, W_QUEEN; je .gen_queen
+    cmp edi, W_KING; je .gen_king; jmp .next_gen_square
+.gen_pawn: call generate_pawn_moves; jmp .next_gen_square
 .gen_knight: call generate_knight_moves; jmp .next_gen_square
 .gen_bishop: call generate_sliding_moves_bishop; jmp .next_gen_square
-.gen_rook:   call generate_sliding_moves_rook; jmp .next_gen_square
-.gen_queen:  call generate_sliding_moves_bishop; call generate_sliding_moves_rook; jmp .next_gen_square
-.gen_king:   call generate_king_moves; jmp .next_gen_square
-.next_gen_square:
-    inc rcx
-    jmp .gen_loop
-.gen_done:
-    ret
+.gen_rook: call generate_sliding_moves_rook; jmp .next_gen_square
+.gen_queen: call generate_sliding_moves_bishop; call generate_sliding_moves_rook; jmp .next_gen_square
+.gen_king: call generate_king_moves; jmp .next_gen_square
+.next_gen_square: inc rcx; jmp .gen_loop
+.gen_done: ret
 
-; --- Piece-Specific Generators (all unchanged) ---
 generate_pawn_moves:
-    mov r8, rcx
-    cmp byte [side_to_move], 0
-    je .white_pawn
+    mov r8, rcx; mov al, [side_to_move]; test al, al; jz .white_pawn
 .black_pawn:
-    mov r10, r8; sub r10, 8
-    cmp r10, 0
-    jl .pawn_done
-    cmp byte [board+r10], EMPTY
-    jne .pawn_done
-    ADD_MOVE r8b, r10b
+    mov r10, r8; sub r10, 8; cmp r10, 0; jl .pawn_done
+    cmp byte [board+r10], EMPTY; jne .pawn_done; ADD_MOVE r8b, r10b
     jmp .pawn_done
 .white_pawn:
-    mov r10, r8; add r10, 8
-    cmp r10, 64
-    jge .pawn_done
-    cmp byte [board+r10], EMPTY
-    jne .pawn_done
-    ADD_MOVE r8b, r10b
-.pawn_done:
-    ret
+    mov r10, r8; add r10, 8; cmp r10, 64; jge .pawn_done
+    cmp byte [board+r10], EMPTY; jne .pawn_done; ADD_MOVE r8b, r10b
+.pawn_done: ret
 
 generate_knight_moves:
-    mov r8, rcx
-    mov r9, knight_offsets
-    mov r12, 8
+    mov r8, rcx; mov r9, knight_offsets; mov r12, 8
 .knight_loop:
-    mov r10, r8
-    movsx rdx, byte [r9]
-    add r10, rdx
-    cmp r10, 0
-    jl .next_knight_move
-    cmp r10, 64
-    jge .next_knight_move
+    mov r10, r8; movsx rdx, byte [r9]; add r10, rdx
+    cmp r10, 0; jl .next_knight_move; cmp r10, 64; jge .next_knight_move
     mov rax, r8; mov rbx, 8; xor rdx, rdx; div rbx; mov rbx, rdx
     mov rax, r10; mov rdi, 8; xor rdx, rdx; div rdi; mov rdi, rdx
-    sub rbx, rdi
-    cmp rbx, -2
-    jle .next_knight_move
-    cmp rbx, 2
-    jge .next_knight_move
-    movzx r11, byte [board+r10]
-    cmp r11, EMPTY
-    je .knight_add_move
-    mov r11b, [side_to_move]
-    xor r11b, 8
-    movzx rax, byte [board+r10]
-    and al, COLOR_MASK
-    cmp al, r11b
-    jne .next_knight_move
-.knight_add_move:
-    ADD_MOVE r8b, r10b
-.next_knight_move:
-    inc r9
-    dec r12
-    jnz .knight_loop
-    ret
+    sub rbx, rdi; cmp rbx, -2; jle .next_knight_move; cmp rbx, 2; jge .next_knight_move
+    movzx r11, byte [board+r10]; cmp r11, EMPTY; je .knight_add_move
+    mov r11b, [side_to_move]; xor r11b, 8; movzx rax, byte [board+r10]
+    and al, COLOR_MASK; cmp al, r11b; jne .next_knight_move
+.knight_add_move: ADD_MOVE r8b, r10b
+.next_knight_move: inc r9; dec r12; jnz .knight_loop; ret
 
 generate_king_moves:
-    mov r8, rcx
-    mov r9, king_offsets
-    mov r12, 8
+    mov r8, rcx; mov r9, king_offsets; mov r12, 8
 .king_loop:
-    mov r10, r8
-    movsx rdx, byte [r9]
-    add r10, rdx
-    cmp r10, 0
-    jl .next_king_move
-    cmp r10, 64
-    jge .next_king_move
+    mov r10, r8; movsx rdx, byte [r9]; add r10, rdx
+    cmp r10, 0; jl .next_king_move; cmp r10, 64; jge .next_king_move
     mov rax, r8; mov rbx, 8; xor rdx, rdx; div rbx; mov rbx, rdx
     mov rax, r10; mov rdi, 8; xor rdx, rdx; div rdi; mov rdi, rdx
-    sub rbx, rdi
-    cmp rbx, -1
-    jle .next_king_move
-    cmp rbx, 1
-    jge .next_king_move
-    movzx r11, byte [board+r10]
-    cmp r11, EMPTY
-    je .king_add_move
-    mov r11b, [side_to_move]
-    xor r11b, 8
-    movzx rax, byte [board+r10]
-    and al, COLOR_MASK
-    cmp al, r11b
-    jne .next_king_move
-.king_add_move:
-    ADD_MOVE r8b, r10b
-.next_king_move:
-    inc r9
-    dec r12
-    jnz .king_loop
-    ret
+    sub rbx, rdi; cmp rbx, -1; jle .next_king_move; cmp rbx, 1; jge .next_king_move
+    movzx r11, byte [board+r10]; cmp r11, EMPTY; je .king_add_move
+    mov r11b, [side_to_move]; xor r11b, 8; movzx rax, byte [board+r10]
+    and al, COLOR_MASK; cmp al, r11b; jne .next_king_move
+.king_add_move: ADD_MOVE r8b, r10b
+.next_king_move: inc r9; dec r12; jnz .king_loop; ret
 
-generate_sliding_moves_bishop:
-    mov r12, bishop_offsets
-    mov r13, 4
-    call generate_sliding_moves
-    ret
-
-generate_sliding_moves_rook:
-    mov r12, rook_offsets
-    mov r13, 4
-    call generate_sliding_moves
-    ret
-
+generate_sliding_moves_bishop: mov r12, bishop_offsets; mov r13, 4; call generate_sliding_moves; ret
+generate_sliding_moves_rook: mov r12, rook_offsets; mov r13, 4; call generate_sliding_moves; ret
 generate_sliding_moves:
-    push r8; push r9; push r10; push r11; push r12; push r13
-    mov r9, r12
+    push r8; push r9; push r10; push r11; push r12; push r13; mov r9, r12
 .dir_loop:
-    mov r8, rcx
-    movsx r10, byte [r9]
+    mov r8, rcx; movsx r10, byte [r9]
 .slide_loop:
-    add r8, r10
-    cmp r8, 0
-    jl .next_dir
-    cmp r8, 64
-    jge .next_dir
-    mov rax, r8; sub rax, r10; mov rbx, 8; xor rdx, rdx; div rbx; mov r11, rdx
-    mov rax, r8; xor rdx, rdx; div rbx; mov rbx, rdx
-    sub r11, rbx
-    cmp r11, -1
-    jle .next_dir
-    cmp r11, 1
-    jge .next_dir
-    movzx rbx, byte [board+r8]
-    cmp rbx, EMPTY
-    je .empty_square
-    mov r11b, [side_to_move]
-    xor r11b, 8
-    movzx rax, byte [board+r8]
-    and al, COLOR_MASK
-    cmp al, r11b
-    jne .next_dir
-    ADD_MOVE cl, r8b
-    jmp .next_dir
-.empty_square:
-    ADD_MOVE cl, r8b
-    jmp .slide_loop
-.next_dir:
-    inc r9
-    dec r13
-    jnz .dir_loop
-    pop r13; pop r12; pop r11; pop r10; pop r9; pop r8
-    ret
+    add r8, r10; cmp r8, 0; jl .next_dir; cmp r8, 64; jge .next_dir
+    movzx rbx, byte [board+r8]; cmp rbx, EMPTY; je .empty_square
+    mov r11b, [side_to_move]; xor r11b, 8; movzx rax, byte [board+r8]
+    and al, COLOR_MASK; cmp al, r11b; jne .next_dir
+    ADD_MOVE cl, r8b; jmp .next_dir
+.empty_square: ADD_MOVE cl, r8b; jmp .slide_loop
+.next_dir: inc r9; dec r13; jnz .dir_loop
+    pop r13; pop r12; pop r11; pop r10; pop r9; pop r8; ret
 
-; --- Make/Unmake and Output Functions ---
 make_move:
-    push r8
-    push r9
-    movzx rax, byte [board+r9]
-    push rax
-    movzx rax, byte [board+r8]
-    push rax
-    mov cl, byte [board+r8]
-    mov byte [board+r9], cl
-    mov byte [board+r8], EMPTY
-    mov al, [side_to_move]
-    xor al, 8
-    mov [side_to_move], al
-    ret
+    push r8; push r9; movzx rax, byte [board+r9]; push rax; movzx rax, byte [board+r8]
+    push rax; mov cl, byte [board+r8]; mov byte [board+r9], cl; mov byte [board+r8], EMPTY
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al; ret
 
 unmake_move:
-    pop rax
-    mov [r8], al
-    pop rax
-    mov [r9], al
-    mov al, [side_to_move]
-    xor al, 8
-    mov [side_to_move], al
-    pop r9
-    pop r8
-    ret
+    pop rax; mov [r8], al; pop rax; mov [r9], al; mov al, [side_to_move]
+    xor al, 8; mov [side_to_move], al; pop r9; pop r8; ret
 
 print_best_move:
     push rax; push rdi; push rsi; push rdx
     mov rax, 1; mov rdi, 1; mov rsi, bestmove_msg; mov rdx, len_bestmove_msg; syscall
     movzx rbx, word [root_best_move]
-    movzx rcx, bl
-    shl rcx, 1
-    mov rsi, square_to_an
-    add rsi, rcx
+    movzx rcx, bl; shl rcx, 1; mov rsi, square_to_an; add rsi, rcx
     mov rax, 1; mov rdi, 1; mov rdx, 2; syscall
-    movzx rcx, bh
-    shl rcx, 1
-    mov rsi, square_to_an
-    add rsi, rcx
+    movzx rcx, bh; shl rcx, 1; mov rsi, square_to_an; add rsi, rcx
     mov rax, 1; mov rdi, 1; mov rdx, 2; syscall
     mov rax, 1; mov rdi, 1; mov rsi, newline; mov rdx, 1; syscall
-    pop rdx; pop rsi; pop rdi; pop rax
-    ret
+    pop rdx; pop rsi; pop rdi; pop rax; ret
+
+initialize_board:
+    mov rsi, initial_board; mov rdi, board; mov rcx, 64; rep movsb
+    mov byte [side_to_move], 0; ret
