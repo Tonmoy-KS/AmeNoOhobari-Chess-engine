@@ -1,44 +1,39 @@
 ---
 
-# AmeNoOhobari Chess Engine
+# Ame-No-Ohobari Chess Engine
 
 ![MIT License](https://img.shields.io/badge/license-MIT-FF4136?labelColor=gray)
 ![Language](https://img.shields.io/badge/Language-x86_64_Assembly-blue?labelColor=gray)
 ![Creator](https://img.shields.io/badge/Creator-Tonmoy_KS-7DF9FF?labelColor=gray)
 
-**AmeNoOhobari v.1.2.4 – The God-Slayer**  
-_A pure assembly chess engine with cutting-edge move ordering, policy network hooks, and tactical search._
+**Ame-No-Ohobari v.1.4.7 – The God-Slayer**  
+_A pure hand-crafted assembly chess engine with advanced pruning, hashing, and full pawn promotion support._
 
 ---
 
-## 🚀 Features (v.1.2.4)
+## 🚀 Features (v.1.4.7)
 
-- **Written in x86_64 Assembly:** Ultimate speed, total hardware control, zero dependencies.
-- **Move Ordering:**  
-  - MVV-LVA scoring for tactical sharpness.
-  - Killer moves and history heuristics for quiet move prioritization.
-  - **NEW:** Policy network hook (ready for CNN integration).
-- **Quiescence Search:**  
-  - Explores only tactical moves at leaf nodes for stable evaluation.
-- **Negamax Search:**  
-  - Alpha-beta pruning, principal variation search (PVS), late move reductions (LMR).
-- **Efficient Move Generation:**  
-  - Piece-specific and generic slider logic, basic pawn moves.
-- **Minimalist Board Representation:**  
-  - 64-byte array, bitwise color/type encoding.
-- **Output:**  
-  - UCI-style best move (e.g., `bestmove g1f3`) for GUI compatibility.
-- **No external libraries** required—just NASM and LD.
+- **Written in x86_64 Assembly:** No dependencies, maximum speed and control.
+- **Iterative Deepening with Aspiration Windows:** Smarter root search for best move.
+- **Transposition Table (TT):** 1 million-entry hash table for fast position lookup.
+- **Zobrist Hashing:** Fast and robust position identification.
+- **Full Static Exchange Evaluation (SEE):** Superior capture ordering, tactical blunder avoidance.
+- **Pawn Promotion:** Both white and black pawns can promote to Queen, Rook, Bishop, or Knight.
+- **Opening Book (stub):** Ready for binary opening book integration.
+- **Comprehensive Move Generation:** Knights, bishops, rooks, queens, kings, pawns, including all captures and promotions.
+- **King Safety Evaluation:** Assesses king zone for threats.
+- **UCI Output:** Prints the best move in standard UCI format (`bestmove g1f3`).
+- **No external libraries needed:** Just NASM and LD.
 
 ---
 
 ## 🛠️ Compilation & Running
 
 **Requirements:**  
-- [NASM](https://www.nasm.us/) (Netwide Assembler)
+- [NASM](https://www.nasm.us/)  
 - GNU LD linker (Linux x86_64)
 
-**Steps:**
+**How to Compile and Run:**
 ```sh
 nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
 ld AmeNoOhobari.o -o AmeNoOhobari
@@ -54,44 +49,42 @@ bestmove g1f3
 
 ## 🧠 How It Works
 
-- **Board & Pieces:** 64 squares; constants for piece type and color.
-- **Evaluation:** Material, piece-square tables, mirrored squares for black.
+- **Board Representation:** 64-square array, bitwise piece/color encoding.
+- **Evaluation:** Material, piece-square tables, passed pawn bonuses, king safety, and more.
 - **Move Generation:**  
-  - Knights, kings, bishops, rooks, queens, pawns.
-  - Sliders use precomputed offsets and wrap-around checks.
-- **Move Ordering:**  
-  - MVV-LVA for captures.
-  - Killer moves/history table for quiet moves.
-  - **Policy Network Hook:** Integrate a CNN for move probability scoring (currently a placeholder).
+  - Handles all normal moves and all pawn promotions.
+  - Accurate capture and quiet move generation.
 - **Search:**  
-  - Negamax with alpha-beta, PVS, LMR, and node count.
-  - **Quiescence search** at leaf nodes for tactical stability.
+  - Iterative deepening with aspiration windows for robust move selection.
+  - Alpha-beta negamax with principal variation and TT lookups.
+  - Quiescence search for tactical stability at leaf nodes.
+- **SEE for Captures:**  
+  - Orders captures by tactical safety using recursive static exchange logic.
+- **Hashing:**  
+  - Zobrist hash for fast and reliable transposition table indexing.
 - **Output:**  
-  - UCI-style `bestmove` in algebraic notation.
+  - UCI-style move output for easy GUI integration.
 
 ---
 
-## 🔥 What's New in v.1.2.4
+## 🔥 What's New in v.1.4.7
 
-- **Policy Network Integration:**  
-  - Added hooks for CNN-based move probability scoring (`policy_scores` array).
-  - Ready for external C/Python/TensorFlow integration.
-- **Quiescence Search:**  
-  - Tactical filtering for stable leaf node evaluation.
-- **Improved Move Ordering:**  
-  - Policy scores, killer moves, history, and MVV-LVA are combined for best move selection.
-- **Search Optimizations:**  
-  - Principal Variation Search (PVS) and Late Move Reductions (LMR) for deeper, faster pruning.
-- **Cleaner Output, Structure, and Comments.**
+- **Full Pawn Promotion Support:** Both colors, all major pieces.
+- **Improved SEE and Capture Ordering:** Minimizes tactical errors.
+- **Robust Transposition Table:** 1M entries for deep search acceleration.
+- **King Safety Evaluation:** Penalizes exposed kings in the zone.
+- **Opening Book Path and Loading (stubbed):** Ready for integration.
+- **Assembly Macros for Move Generation:** Fast and flexible.
+- **Better Modularization and Comments:** Easier for you (and others) to hack and extend.
 
 ---
 
 ## ⚠️ Limitations
 
-- Pawn logic: No promotions/en passant yet.
-- No castling or advanced rules.
-- Policy network is a stub—needs external integration for neural move ordering.
-- Not a complete chess engine yet; ideal for learning, hacking, and experimentation.
+- Castling, en passant, and some advanced rules are not yet implemented.
+- Opening book, Syzygy tablebase, and some evaluation components are stubbed.
+- Several functions are placeholders and can be implemented for full strength.
+- Not a finished competitive engine—ideal for learning, hacking, and extending.
 
 ---
 
@@ -104,8 +97,8 @@ MIT License
 
 ## 🤝 Contributing
 
-Pull requests, optimizations, and bug fixes are very welcome!  
-Open an issue for feature requests or ideas.
+Pull requests, optimizations, and bug fixes are welcome!  
+Open an issue for feature requests or suggestions.
 
 ---
 
@@ -115,6 +108,6 @@ GitHub: [Tonmoy-KS](https://github.com/Tonmoy-KS)
 
 ---
 
-*May your moves be as sharp as AmeNoOhobari’s blade!*
+*May your moves be as sharp as Ame-No-Ohobari’s blade!*
 
 ---
