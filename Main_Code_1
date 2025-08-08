@@ -147,6 +147,10 @@ search_root:
     inc r11
     cmp eax, r12d; jle .next_move_in_loop
     mov r12d, eax; mov r9d, eax; mov cl, r8b; mov ch, r9b; mov [root_best_move], cx
+.illegal_root_move:
+    call unmake_move
+    inc r11
+    jmp .move_loop
 .next_move_in_loop:
     jmp .move_loop
 .done_searching:
@@ -164,12 +168,21 @@ negamax:
     mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r15, r10
     jge .done_searching_negamax
     call find_next_best_move
-    movzx ecx, byte[r10]; movzx edx, byte[r10+1]
-    call make_move
-    mov rdi, r14; dec rdi
-    call is_king_in_check
-    test al, al; jz .no_extension; inc rdi
-.no_extension:
+movzx ecx, byte[r10]; movzx edx, byte[r10+1]
+call make_move
+mov al, [side_to_move]
+xor al, 8                   ; Temporarily flip side back
+mov [side_to_move], al
+
+call is_king_in_check       ; Is MY king in check after my move?
+
+mov al, [side_to_move]
+xor al, 8                   ; Flip side back to normal
+mov [side_to_move], al
+
+test al, al                 
+jnz .illegal_move           
+
     cmp r15, 0; je .full_window_search
     mov esi, r12d; neg esi; dec esi; mov edx, esi; inc edx
     call negamax; neg eax
@@ -182,6 +195,8 @@ negamax:
     cmp eax, r8d; jle .next_move_negamax
     mov r8d, eax; mov r12d, eax
     cmp r12d, r13d; jge .beta_cutoff
+.illegal_move:
+    call unmake_move         
 .next_move_negamax:
     inc r15; jmp .move_loop_negamax
 .beta_cutoff: jmp .done_searching_negamax
@@ -313,19 +328,206 @@ static_exchange_evaluation:
     pop r15; pop r14; pop r13; pop r12; pop rdi; pop rsi; pop rdx; pop rcx; pop rbx
     ret
 
+; Helper utility: is_move_on_board(rax=from, rbx=to) -> al (0 or 1)
+; Checks for board wrap-around. Essential for knight and pawn moves.
+is_move_on_board:
+    push rdx
+    push rcx
+    mov rcx, 8
+    
+    mov rdi, rax
+    xor rdx, rdx
+    div rcx             ; from_file in rdx
+    push rdx
+    
+    mov rdi, rbx
+    xor rdx, rdx
+    div rcx             ; to_file in rdx
+    
+    pop rcx             ; pop from_file into rcx
+    sub rdx, rcx        ; diff = to_file - from_file
+    
+    cmp rdx, 2
+    jg .move_wraps
+    cmp rdx, -2
+    jl .move_wraps
+    
+    mov rax, 1
+    jmp .util_done
+.move_wraps:
+    xor rax, rax
+.util_done:
+    pop rcx
+    pop rdx
+    ret
+
+;--------------------------------------------------------------------------
+; check_knight_attacks(rdi: square, rsi: attacker_color) -> rax (0 or 1)
+;--------------------------------------------------------------------------
+check_knight_attacks:
+    push rbx; push rcx; push rdx; push r8; push r9
+    mov r8, rdi             ; r8 = target square
+    mov r9b, sil            ; r9b = attacker color
+    mov rdx, knight_offsets
+    mov rcx, 8              ; 8 knight moves
+.loop:
+    movsx rbx, byte [rdx]
+    add rbx, r8
+    cmp rbx, 0
+    jl .next
+    cmp rbx, 64
+    jge .next
+    mov rax, r8
+    call is_move_on_board
+    test al, al
+    jz .next
+    movzx rax, byte [board + rbx]
+    cmp rax, EMPTY
+    je .next
+    mov al, byte [board + rbx]
+    and al, COLOR_MASK
+    cmp al, r9b
+    jne .next
+    mov al, byte [board + rbx]
+    and al, PIECE_MASK
+    cmp al, W_KNIGHT
+    jne .next
+    mov rax, 1
+    jmp .exit
+.next:
+    inc rdx
+    dec rcx
+    jnz .loop
+    xor rax, rax
+.exit:
+    pop r9; pop r8; pop rdx; pop rcx; pop rbx
+    ret
+
+;--------------------------------------------------------------------------
+; check_sliding_attacks(rdi: square, rsi: attacker_color) -> rax (0 or 1)
+; Checks for rook, bishop, queen, and king attacks.
+;--------------------------------------------------------------------------
+check_sliding_attacks:
+    push rbx; push rcx; push rdx; push r10; push r11; push r12; push r13
+    mov r10, rdi            ; r10 = target square
+    mov r11b, sil           ; r11b = attacker color
+    ; --- Check Diagonal (Bishop/Queen) ---
+    mov r12, bishop_offsets
+    mov r13, 4
+    call .sliding_loop
+    test al, al; jnz .found
+    ; --- Check Straight (Rook/Queen) ---
+    mov r12, rook_offsets
+    mov r13, 4
+    call .sliding_loop
+    test al, al; jnz .found
+    ; --- Check King ---
+    mov rcx, 8
+    mov rdx, king_offsets
+.king_loop:
+    movsx rax, byte [rdx]
+    add rax, r10
+    cmp rax, 0; jl .next_king
+    cmp rax, 64; jge .next_king
+    mov cl, byte [board+rax]; and cl, PIECE_MASK; cmp cl, W_KING; jne .next_king
+    mov cl, byte [board+rax]; and cl, COLOR_MASK; cmp cl, r11b; jne .next_king
+    mov rax, 1; jmp .exit
+.next_king:
+    inc rdx; dec rcx; jnz .king_loop
+.not_found:
+    xor rax, rax
+    jmp .exit
+.found:
+    mov rax, 1
+.exit:
+    pop r13; pop r12; pop r11; pop r10; pop rdx; pop rcx; pop rbx
+    ret
+; Helper for check_sliding_attacks
+.sliding_loop:
+    movsx rdi, byte [r12]
+    mov rax, r10
+.ray_loop:
+    add rax, rdi
+    cmp rax, 0; jl .next_dir
+    cmp rax, 64; jge .next_dir
+    mov rsi, rax; sub rsi, rdi; call is_move_on_board; test al, al; jz .next_dir
+    mov cl, byte [board + rax]
+    cmp cl, EMPTY; je .ray_loop
+    mov ch, cl; and ch, COLOR_MASK; cmp ch, r11b; jne .next_dir
+    and cl, PIECE_MASK
+    cmp cl, W_QUEEN; je .attack_is_real
+    cmp r12, bishop_offsets; je .check_bishop
+    cmp cl, W_ROOK; jne .next_dir
+    jmp .attack_is_real
+.check_bishop:
+    cmp cl, W_BISHOP; jne .next_dir
+.attack_is_real:
+    mov al, 1; ret
+.next_dir:
+    inc r12; dec r13; jnz .sliding_loop
+    mov al, 0; ret
+
+;--------------------------------------------------------------------------
+; is_square_attacked(rdi: square, rsi: attacker_color) -> rax (0 or 1)
+;--------------------------------------------------------------------------
+is_square_attacked:
+    push rbx; push r12; push r13; push r14
+    mov r12, rdi; mov r13b, sil
+    mov r14, r13; xor r14, 8 ; opponent_color
+    cmp r14b, 0; jne .check_black_pawn_attack
+    mov rax, r12; sub rax, 9; call .check_pawn_attack; test al, al; jnz .attack_found
+    mov rax, r12; sub rax, 7; call .check_pawn_attack; test al, al; jnz .attack_found
+    jmp .check_non_pawn
+.check_black_pawn_attack:
+    mov rax, r12; add rax, 7; call .check_pawn_attack; test al, al; jnz .attack_found
+    mov rax, r12; add rax, 9; call .check_pawn_attack; test al, al; jnz .attack_found
+.check_non_pawn:
+    mov rdi, r12; mov rsi, r13; call check_knight_attacks; test al, al; jnz .attack_found
+    mov rdi, r12; mov rsi, r13; call check_sliding_attacks; test al, al; jnz .attack_found
+.no_attack:
+    xor rax, rax; jmp .done
+.attack_found:
+    mov rax, 1
+.done:
+    pop r14; pop r13; pop r12; pop rbx; ret
+; Helper for is_square_attacked
+.check_pawn_attack:
+    cmp rax, 0; jl .pawn_fail; cmp rax, 64; jge .pawn_fail
+    mov rbx, r12; mov rsi, rax; call is_move_on_board; test al, al; jz .pawn_fail
+    movzx rbx, byte [board + rax]; cmp rbx, EMPTY; je .pawn_fail
+    mov cl, r13b; or cl, W_PAWN; cmp bl, cl; jne .pawn_fail
+    mov al, 1; ret
+.pawn_fail:
+    mov al, 0; ret
+
+;--------------------------------------------------------------------------
+; is_king_in_check() -> rax (0 or 1)
+; Uses the current side_to_move to find its king and see if it's attacked.
+;--------------------------------------------------------------------------
+is_king_in_check:
+    push rdi; push rsi; push rbx; push rcx
+    movzx rsi, byte [side_to_move]
+    mov cl, sil; or cl, W_KING
+    mov rbx, 0
+.find_loop:
+    cmp byte [board + rbx], cl; je .found_king
+    inc rbx; cmp rbx, 64; jne .find_loop
+.found_king:
+    mov rdi, rbx; mov rsi, [side_to_move]; xor rsi, 8
+    call is_square_attacked
+    pop rcx; pop rbx; pop rsi; pop rdi
+    ret
+
+; Dummy placeholders for other functions until they are implemented
 get_least_valuable_attacker: ret
-is_king_in_check: ret
-is_square_attacked: ret
 is_square_attacked_by_opponent: ret
-check_pawn_attacks: ret
-check_knight_attacks: ret
-check_sliding_attacks: ret
 evaluate_pawns: ret
 evaluate_king_safety: ret
 evaluate_rooks: ret
 is_file_open: ret
 is_passed: ret
 probe_tablebase: mov eax, 100; ret
+
 board_to_fen: ret
 load_opening_book: ret
 find_book_move: xor rax, rax; ret
@@ -385,15 +587,79 @@ generate_moves:
 .gen_done: ret
 
 generate_pawn_moves:
-    mov r8, rcx; mov al, [side_to_move]; test al, al; jz .white_pawn
+    push r8; push r9; push r10; push r11
+    mov r8, rcx                 ; from square
+    mov al, [side_to_move]
+    test al, al; jz .white_pawn
+
+; --- BLACK PAWNS ---
 .black_pawn:
-    mov r10, r8; sub r10, 8; cmp r10, 0; jl .pawn_done
-    cmp byte [board+r10], EMPTY; jne .pawn_done; ADD_MOVE r8b, r10b
+    ; 1. Single Push
+    mov r10, r8; sub r10, 8;
+    cmp r10, 0; jl .black_captures
+    cmp byte [board+r10], EMPTY; jne .black_captures
+    ADD_MOVE r8b, r10b
+    ; 2. Double Push
+    cmp r8, 48; jl .black_captures
+    cmp r8, 56; jge .black_captures
+    mov r10, r8; sub r10, 16
+    cmp byte [board+r10], EMPTY; jne .black_captures
+    ADD_MOVE r8b, r10b
+
+.black_captures:
+    ; 3. Capture West
+    mov r10, r8; sub r10, 9
+    cmp r10, 0; jl .black_capture_east
+    mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .black_capture_east
+    movzx r11, byte [board+r10]; cmp r11, EMPTY; je .black_capture_east
+    mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 0; jne .black_capture_east
+    ADD_MOVE r8b, r10b
+
+.black_capture_east:
+    ; 4. Capture East
+    mov r10, r8; sub r10, 7
+    cmp r10, 0; jl .pawn_done
+    mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .pawn_done
+    movzx r11, byte [board+r10]; cmp r11, EMPTY; je .pawn_done
+    mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 0; jne .pawn_done
+    ADD_MOVE r8b, r10b
     jmp .pawn_done
+
+; --- WHITE PAWNS ---
 .white_pawn:
-    mov r10, r8; add r10, 8; cmp r10, 64; jge .pawn_done
-    cmp byte [board+r10], EMPTY; jne .pawn_done; ADD_MOVE r8b, r10b
-.pawn_done: ret
+    ; 1. Single Push
+    mov r10, r8; add r10, 8
+    cmp r10, 64; jge .white_captures
+    cmp byte [board+r10], EMPTY; jne .white_captures
+    ADD_MOVE r8b, r10b
+    ; 2. Double Push
+    cmp r8, 8; jl .white_captures
+    cmp r8, 16; jge .white_captures
+    mov r10, r8; add r10, 16
+    cmp byte [board+r10], EMPTY; jne .white_captures
+    ADD_MOVE r8b, r10b
+
+.white_captures:
+    ; 3. Capture West
+    mov r10, r8; add r10, 7
+    cmp r10, 64; jge .white_capture_east
+    mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .white_capture_east
+    movzx r11, byte [board+r10]; cmp r11, EMPTY; je .white_capture_east
+    mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 8; jne .white_capture_east
+    ADD_MOVE r8b, r10b
+
+.white_capture_east:
+    ; 4. Capture East
+    mov r10, r8; add r10, 9
+    cmp r10, 64; jge .pawn_done
+    mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .pawn_done
+    movzx r11, byte [board+r10]; cmp r11, EMPTY; je .pawn_done
+    mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 8; jne .pawn_done
+    ADD_MOVE r8b, r10b
+
+.pawn_done:
+    pop r11; pop r10; pop r9; pop r8
+    ret
 
 generate_knight_moves:
     mov r8, rcx; mov r9, knight_offsets; mov r12, 8
