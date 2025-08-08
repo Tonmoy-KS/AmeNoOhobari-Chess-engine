@@ -1,7 +1,7 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.4.5 - The God-Slayer Chess Engine
+; Ame-No-Ohobari.asm - V.1.4.7 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
-; Version: 1.4.5
+; Version: 1.4.7
 ;
 ; How to Compile and Run (on Linux):
 ;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
@@ -14,7 +14,7 @@
 section .data
 EMPTY       equ 0; W_PAWN      equ 1; W_KNIGHT    equ 2; W_BISHOP    equ 3; W_ROOK      equ 4; W_QUEEN     equ 5; W_KING      equ 6
 B_PAWN      equ 9; B_KNIGHT    equ 10; B_BISHOP    equ 11; B_ROOK      equ 12; B_QUEEN     equ 13; B_KING      equ 14
-PIECE_MASK  equ 7; COLOR_MASK  equ 8
+PIECE_MASK  equ 7; COLOR_MASK  equ 8 ; TT_EXACT      equ 1; TT_LOWERBOUND equ 2; TT_UPPERBOUND equ 3
 
 piece_values: dw 0, 100, 320, 330, 500, 900, 10000
 passed_pawn_bonus: dw 0, 10, 30, 50, 75, 100, 150, 0
@@ -86,7 +86,9 @@ opening_book: resb 16 * 1024 * 1024
 book_size: resq 1
 fen_buffer: resb 100
 best_score_prev_iter: resd 1
-
+zobrist_hash: resq 1
+TT_SIZE: equ 1024 * 1024 ; 1 Million entries
+transposition_table: resb TT_SIZE * 16
 section .text
 extern probe_syzygy_wdl_from_fen
 global _start
@@ -94,6 +96,16 @@ global _start
 %macro ADD_MOVE 2
     mov rdi, [move_list_end]
     mov byte [rdi], %1; mov byte [rdi+1], %2; add rdi, 4; mov [move_list_end], rdi
+%endmacro
+
+%macro ADD_PROMOTION_MOVE 3 ; from, to, promotion_piece
+    mov rdi, [move_list_end]
+    mov byte [rdi], %1
+    mov byte [rdi+1], %2
+    mov byte [rdi+2], %3  ; Store the promotion piece
+    mov byte [rdi+3], 0   ; Clear the 4th byte
+    add rdi, 4
+    mov [move_list_end], rdi
 %endmacro
 
 _start:
@@ -132,77 +144,183 @@ iterative_deepening:
 
 search_root:
     push r12; push r13; push r14; push r15
-    mov r12d, esi; mov r13d, edx; mov r15, rdi; mov dword [root_best_move], 0
+    mov r12d, esi             ; r12d = alpha
+    mov r13d, edx             ; r13d = beta
+    mov r15, rdi              ; r15 = depth
+    mov dword [root_best_move], 0
     mov qword [nodes_searched], 0
-    call generate_moves; call score_moves
-    mov r11, 0; mov r9d, -30001
+
+    call generate_moves
+    call score_moves
+
+    mov r11, 0                ; move_index
+    mov r9d, -30001           ; best_score
+
 .move_loop:
     mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r11, r10
     jge .done_searching
-    call find_next_best_move; movzx r8, byte [r10]; movzx r9b, byte [r10+1]
-    call make_move
-    mov rdi, r15; dec rdi; mov rsi, r13d; neg esi; mov rdx, r12d; neg edx
-    call negamax; neg eax
+
+call find_next_best_move
+call make_move
+
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    call is_king_in_check
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    test al, al
+    jnz .illegal_root_move    ; If illegal, jump to the handler
+
+    mov rdi, r15; dec rdi      ; depth-1
+    mov esi, r13d; neg esi     ; -beta
+    mov edx, r12d; neg edx     ; -alpha
+    call negamax
+    neg eax
+
     call unmake_move
-    inc r11
-    cmp eax, r12d; jle .next_move_in_loop
-    mov r12d, eax; mov r9d, eax; mov cl, r8b; mov ch, r9b; mov [root_best_move], cx
+
+    cmp eax, r12d
+    jle .next_move_in_loop    ; Not better than alpha, continue
+
+    ; New best move found
+    mov r12d, eax             
+    mov r9d, eax              
+    mov cl, r8b               ; from
+    mov ch, r9b               ; to
+    mov [root_best_move], cx
+    jmp .next_move_in_loop
+
 .illegal_root_move:
-    call unmake_move
+    call unmake_move          ; Unmake the illegal move
+
+.next_move_in_loop:
     inc r11
     jmp .move_loop
-.next_move_in_loop:
-    jmp .move_loop
+
 .done_searching:
     mov eax, r9d
-    pop r15; pop r14; pop r13; pop r12; ret
+    pop r15; pop r14; pop r13; pop r12;
+    ret
 
 negamax:
-    push rbp; mov rbp, rsp; push r12; push r13; push r14; push r15; push rbx
+    push rbp; mov rbp, rsp; sub rsp, 8 ; Make space for best_flag
+    push rbx; push r12; push r13; push r14; push r15
+
+    call compute_zobrist_hash
+    mov rax, [zobrist_hash]
+    mov rbx, TT_SIZE - 1
+    and rax, rbx
+    lea r10, [transposition_table + rax*16] ; r10 = TT entry address
+
+    cmp [r10], qword [zobrist_hash]
+    jne .tt_miss
+
+    mov eax, [r10+8]  ; Stored score/flag
+    mov ebx, [r10+12] ; Stored depth
+    cmp ebx, edi      ; if (stored_depth < current_depth) -> miss
+    jl .tt_miss
+
+    mov bl, al      ; flag in bl
+    shr eax, 8      ; score in eax
+
+    cmp bl, TT_EXACT
+    je .tt_hit_return
+    cmp bl, TT_LOWERBOUND
+    je .tt_hit_lower
+    ; It's an UPPERBOUND
+    cmp eax, esi      ; if (score <= alpha) return score
+    jle .tt_hit_return
+    jmp .tt_miss
+.tt_hit_lower:
+    cmp eax, edx      ; if (score >= beta) return score
+    jge .tt_hit_return
+
+.tt_miss:
     inc qword [nodes_searched]
     cmp rdi, 0; je .quiescence_search_entry
-    mov r12d, esi; mov r13d, edx; mov r14, rdi; mov rbx, 0
-    call generate_moves; call score_moves
-    mov r15, 0; mov r8d, -30001
+
+    mov r12d, esi             ; r12d = alpha
+    mov r13d, edx             ; r13d = beta
+    mov r14, rdi              ; r14  = depth
+    mov r8d, -30001           ; best_score = -infinity
+    mov byte [rbp-8], TT_UPPERBOUND ; best_flag = TT_UPPERBOUND 
+
+    call generate_moves
+    call score_moves
+    mov r15, 0                ; move_index = 0
+
 .move_loop_negamax:
-    mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r15, r10
-    jge .done_searching_negamax
-    call find_next_best_move
-movzx ecx, byte[r10]; movzx edx, byte[r10+1]
-call make_move
-mov al, [side_to_move]
-xor al, 8                   ; Temporarily flip side back
-mov [side_to_move], al
+    mov rbx, [move_list_end]; sub rbx, move_list; shr rbx, 2; cmp r15, rbx
+    jge .done_searching
 
-call is_king_in_check       ; Is MY king in check after my move?
+   call find_next_best_move
+; Note: find_next_best_move uses r10 for the move address
+  call make_move
 
-mov al, [side_to_move]
-xor al, 8                   ; Flip side back to normal
-mov [side_to_move], al
+    ; Legality check
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    call is_king_in_check
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    test al, al; jnz .illegal_move
 
-test al, al                 
-jnz .illegal_move           
-
-    cmp r15, 0; je .full_window_search
-    mov esi, r12d; neg esi; dec esi; mov edx, esi; inc edx
+    ; Recursive call
+    mov rdi, r14; dec rdi
+    mov esi, r13d; neg esi
+    mov edx, r12d; neg edx
     call negamax; neg eax
-    cmp eax, r12d; jle .store_score; cmp eax, r13d; jge .store_score
-.full_window_search:
-    mov esi, r13d; neg esi; mov edx, r12d; neg edx
-    call negamax; neg eax
-.store_score:
+
     call unmake_move
-    cmp eax, r8d; jle .next_move_negamax
-    mov r8d, eax; mov r12d, eax
-    cmp r12d, r13d; jge .beta_cutoff
-.illegal_move:
-    call unmake_move         
+
+   ; Has this move produced a better score?
+    cmp eax, r8d
+    jle .next_move_negamax ; If not, continue to next move
+
+    ; Yes, update our best score for this node
+    mov r8d, eax
+
+    ; Did this move raise alpha?
+    cmp eax, r12d
+    jle .next_move_negamax ; If not, continue to next move
+
+    mov r12d, eax
+    mov byte [rbp-8], TT_EXACT
+
+    cmp r12d, r13d
+    jge .beta_cutoff       
+
 .next_move_negamax:
-    inc r15; jmp .move_loop_negamax
-.beta_cutoff: jmp .done_searching_negamax
-.quiescence_search_entry: call quiescence_search; jmp .exit
-.done_searching_negamax: mov eax, r8d
-.exit: pop rbx; pop r15; pop r14; pop r13; pop r12; mov rsp, rbp; pop rbp; ret
+    inc r15
+    jmp .move_loop_negamax
+
+.illegal_move:
+    call unmake_move
+    jmp .next_move_negamax
+
+.beta_cutoff:
+    mov byte [rbp-8], TT_LOWERBOUND ; This was a beta cutoff, score is a lower bound
+    mov r8d, r13d                   ; The score is at least beta
+
+.done_searching:
+    ; r10 still holds the TT entry address
+    mov [r10], qword [zobrist_hash]
+    mov eax, r8d
+    shl eax, 8
+    mov al, [rbp-8]
+    mov [r10+8], eax ; Store score and flag
+    mov [r10+12], edi ; Store depth
+    mov eax, r8d ; Return the actual score
+    jmp .exit
+
+.quiescence_search_entry:
+    call quiescence_search
+    jmp .exit
+
+.tt_hit_return:
+    mov r8d, eax ; Use the score from the TT
+
+.exit:
+    pop r15; pop r14; pop r13; pop r12; pop rbx
+    add rsp, 8 ; Clean up stack space for best_flag
+    pop rbp
+    ret
 
 quiescence_search:
     push rbp; mov rbp, rsp; push r12; push r13; push r14; push r15
@@ -522,18 +640,115 @@ is_king_in_check:
 get_least_valuable_attacker: ret
 is_square_attacked_by_opponent: ret
 evaluate_pawns: ret
-evaluate_king_safety: ret
+evaluate_king_safety:
+    push rdi; push rsi; push rbx; push rcx; push rdx
+    mov rdx, 0 ; safety_score = 0
+    
+    ; Find White King
+    mov cl, W_KING
+    call .find_and_eval_king_safety
+    add rdx, rax ; add white's score
+    
+    ; Find Black King
+    mov cl, B_KING
+    call .find_and_eval_king_safety
+    sub rdx, rax ; subtract black's score
+    
+    mov eax, rdx
+    pop rdx; pop rcx; pop rbx; pop rsi; pop rdi
+    ret
+
+; Helper for evaluate_king_safety
+; Input: cl = king piece to find
+; Output: rax = safety penalty for that king
+.find_and_eval_king_safety:
+    push rbx; push rdi; push rsi
+    mov rbx, 0
+.find_loop:
+    cmp rbx, 64
+    jge .done_find
+    cmp byte [board + rbx], cl
+    je .found_king
+    inc rbx
+    jmp .find_loop
+.found_king:
+    ; We found the king at rbx. Check the 8 squares around it.
+    mov rdi, king_offsets
+    mov rcx, 8
+    mov rsi, 0 ; Penalty score for this king
+.attack_check_loop:
+    movsx r10, byte [rdi]
+    add r10, rbx
+    ; bounds check
+    cmp r10, 0
+    jl .next_attack_sq
+    cmp r10, 64
+    jge .next_attack_sq
+    
+    ; Check if this king-zone square is attacked by the opponent
+    push rcx
+    push rdi
+    push rsi
+    mov rdi, r10 ; square to check
+    mov sil, byte [board+rbx] ; King color
+    xor sil, 8 ; Attacker color
+    call is_square_attacked
+    test al, al
+    jz .no_attack_here
+    ; Attacked! Add a penalty. Let's say -10 points per attacked square.
+    pop rsi
+    sub rsi, 10
+    jmp .pop_and_continue
+.no_attack_here:
+    pop rsi
+.pop_and_continue:
+    pop rdi
+    pop rcx
+
+.next_attack_sq:
+    inc rdi
+    dec rcx
+    jnz .attack_check_loop
+    mov rax, rsi ; Return the total penalty
+.done_find:
+    pop rsi; pop rdi; pop rbx
+    ret
 evaluate_rooks: ret
 is_file_open: ret
 is_passed: ret
 probe_tablebase: mov eax, 100; ret
-
 board_to_fen: ret
 load_opening_book: ret
 find_book_move: xor rax, rax; ret
 weighted_choice: ret
-compute_zobrist_hash: ret
-initialize_zobrist_keys:
+compute_zobrist_hash:
+    push rax; push rbx; push rcx; push rdi
+    xor rax, rax ; This will be our hash
+    mov rcx, 0
+.hash_loop:
+    cmp rcx, 64
+    jge .hash_done
+    movzx rdi, byte [board+rcx]
+    cmp rdi, EMPTY
+    je .next_square
+    ; Hash piece: piece_keys[square * 12 + piece_type-1]
+    mov rbx, rcx
+    imul rbx, 12
+    add rbx, rdi
+    dec rbx ; Piece values are 1-14, array is 0-indexed
+    xor rax, [piece_keys + rbx * 8]
+.next_square:
+    inc rcx
+    jmp .hash_loop
+.hash_done:
+    mov rbx, [side_to_move]
+    test rbx, rbx
+    jz .white_to_move
+    xor rax, [side_key] ; Hash in black to move
+.white_to_move:
+    mov [zobrist_hash], rax
+    pop rdi; pop rcx; pop rbx; pop rax
+    retinitialize_zobrist_keys:
     mov rdi, zobrist_keys
     mov rcx, 769 
 .rand_loop:
@@ -594,67 +809,105 @@ generate_pawn_moves:
 
 ; --- BLACK PAWNS ---
 .black_pawn:
-    ; 1. Single Push
-    mov r10, r8; sub r10, 8;
+    mov r10, r8; sub r10, 8
     cmp r10, 0; jl .black_captures
     cmp byte [board+r10], EMPTY; jne .black_captures
+    ; Check for promotion
+    cmp r10, 8; jge .black_single_push
+    ; It IS a promotion
+    ADD_PROMOTION_MOVE r8b, r10b, B_QUEEN
+    ADD_PROMOTION_MOVE r8b, r10b, B_ROOK
+    ADD_PROMOTION_MOVE r8b, r10b, B_BISHOP
+    ADD_PROMOTION_MOVE r8b, r10b, B_KNIGHT
+    jmp .black_captures
+.black_single_push:
     ADD_MOVE r8b, r10b
-    ; 2. Double Push
-    cmp r8, 48; jl .black_captures
-    cmp r8, 56; jge .black_captures
+    ; Double Push
+    cmp r8, 48; jl .black_captures; cmp r8, 56; jge .black_captures
     mov r10, r8; sub r10, 16
     cmp byte [board+r10], EMPTY; jne .black_captures
     ADD_MOVE r8b, r10b
 
 .black_captures:
-    ; 3. Capture West
+    ; Capture West
     mov r10, r8; sub r10, 9
     cmp r10, 0; jl .black_capture_east
     mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .black_capture_east
     movzx r11, byte [board+r10]; cmp r11, EMPTY; je .black_capture_east
     mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 0; jne .black_capture_east
+    ; Check for promotion on capture
+    cmp r10, 8; jge .black_capture_west_no_promo
+    ADD_PROMOTION_MOVE r8b, r10b, B_QUEEN
+    ADD_PROMOTION_MOVE r8b, r10b, B_ROOK
+    ADD_PROMOTION_MOVE r8b, r10b, B_BISHOP
+    ADD_PROMOTION_MOVE r8b, r10b, B_KNIGHT
+    jmp .black_capture_east
+.black_capture_west_no_promo:
     ADD_MOVE r8b, r10b
 
 .black_capture_east:
-    ; 4. Capture East
+    ; Capture East
     mov r10, r8; sub r10, 7
     cmp r10, 0; jl .pawn_done
     mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .pawn_done
     movzx r11, byte [board+r10]; cmp r11, EMPTY; je .pawn_done
     mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 0; jne .pawn_done
+    cmp r10, 8; jge .black_capture_east_no_promo
+    ADD_PROMOTION_MOVE r8b, r10b, B_QUEEN
+    ADD_PROMOTION_MOVE r8b, r10b, B_ROOK
+    ADD_PROMOTION_MOVE r8b, r10b, B_BISHOP
+    ADD_PROMOTION_MOVE r8b, r10b, B_KNIGHT
+    jmp .pawn_done
+.black_capture_east_no_promo:
     ADD_MOVE r8b, r10b
     jmp .pawn_done
 
 ; --- WHITE PAWNS ---
 .white_pawn:
-    ; 1. Single Push
     mov r10, r8; add r10, 8
     cmp r10, 64; jge .white_captures
     cmp byte [board+r10], EMPTY; jne .white_captures
+    cmp r10, 56; jl .white_single_push
+    ADD_PROMOTION_MOVE r8b, r10b, W_QUEEN
+    ADD_PROMOTION_MOVE r8b, r10b, W_ROOK
+    ADD_PROMOTION_MOVE r8b, r10b, W_BISHOP
+    ADD_PROMOTION_MOVE r8b, r10b, W_KNIGHT
+    jmp .white_captures
+.white_single_push:
     ADD_MOVE r8b, r10b
-    ; 2. Double Push
-    cmp r8, 8; jl .white_captures
-    cmp r8, 16; jge .white_captures
+    cmp r8, 8; jl .white_captures; cmp r8, 16; jge .white_captures
     mov r10, r8; add r10, 16
     cmp byte [board+r10], EMPTY; jne .white_captures
     ADD_MOVE r8b, r10b
 
 .white_captures:
-    ; 3. Capture West
     mov r10, r8; add r10, 7
     cmp r10, 64; jge .white_capture_east
     mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .white_capture_east
     movzx r11, byte [board+r10]; cmp r11, EMPTY; je .white_capture_east
     mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 8; jne .white_capture_east
+    cmp r10, 56; jl .white_capture_west_no_promo
+    ADD_PROMOTION_MOVE r8b, r10b, W_QUEEN
+    ADD_PROMOTION_MOVE r8b, r10b, W_ROOK
+    ADD_PROMOTION_MOVE r8b, r10b, W_BISHOP
+    ADD_PROMOTION_MOVE r8b, r10b, W_KNIGHT
+    jmp .white_capture_east
+.white_capture_west_no_promo:
     ADD_MOVE r8b, r10b
 
 .white_capture_east:
-    ; 4. Capture East
     mov r10, r8; add r10, 9
     cmp r10, 64; jge .pawn_done
     mov rax, r8; mov rbx, r10; call is_move_on_board; test al, al; jz .pawn_done
     movzx r11, byte [board+r10]; cmp r11, EMPTY; je .pawn_done
     mov r11b, [board+r10]; and r11b, COLOR_MASK; cmp r11b, 8; jne .pawn_done
+    cmp r10, 56; jl .white_capture_east_no_promo
+    ADD_PROMOTION_MOVE r8b, r10b, W_QUEEN
+    ADD_PROMOTION_MOVE r8b, r10b, W_ROOK
+    ADD_PROMOTION_MOVE r8b, r10b, W_BISHOP
+    ADD_PROMOTION_MOVE r8b, r10b, W_KNIGHT
+    jmp .pawn_done
+.white_capture_east_no_promo:
     ADD_MOVE r8b, r10b
 
 .pawn_done:
@@ -706,13 +959,34 @@ generate_sliding_moves:
     pop r13; pop r12; pop r11; pop r10; pop r9; pop r8; ret
 
 make_move:
-    push r8; push r9; movzx rax, byte [board+r9]; push rax; movzx rax, byte [board+r8]
-    push rax; mov cl, byte [board+r8]; mov byte [board+r9], cl; mov byte [board+r8], EMPTY
-    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al; ret
+    movzx r8, byte [r10]
+    movzx r9, byte [r10+1]
+    push r8; push r9
+    movzx rax, byte [board+r9]; push rax
+    movzx rax, byte [board+r8]; push rax
+    mov cl, byte [board+r8]
+    mov byte [board+r9], cl
+    mov byte [board+r8], EMPTY
+    movzx rax, byte [r10+2]
+    test rax, rax
+    jz .no_promotion
+    mov byte [board+r9], al
+.no_promotion:
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    ret
 
 unmake_move:
-    pop rax; mov [r8], al; pop rax; mov [r9], al; mov al, [side_to_move]
-    xor al, 8; mov [side_to_move], al; pop r9; pop r8; ret
+    movzx r8, byte [r10]
+    movzx r9, byte [r10+1]
+    pop rax
+    mov [r8], al
+    pop rax
+    mov [r9], al
+    mov al, [side_to_move]
+    xor al, 8; mov [side_to_move], al
+    pop r9
+    pop r8
+    ret
 
 print_best_move:
     push rax; push rdi; push rsi; push rdx
