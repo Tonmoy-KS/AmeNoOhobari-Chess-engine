@@ -91,8 +91,7 @@ bestmove g1f3
 
 ## ⚠️ Limitations & TODO
 
-- Castling, en passant, and some advanced chess rules are not yet implemented.
-- Opening book, Syzygy tablebase, and some evaluation components are currently stubs.
+- Opening book, and some evaluation components are currently stubs.
 - Some functions are placeholders – can be improved for competitive strength.
 - Not a finished competitive engine—ideal for learning, hacking, and further development.
 
