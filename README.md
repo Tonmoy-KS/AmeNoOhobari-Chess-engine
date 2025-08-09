@@ -1,29 +1,32 @@
 ---
 
-# Ame-No-Ohobari Chess Engine (OUTDATED)
+# Ame-No-Ohobari Chess Engine (v1.5.4)
 
 ![MIT License](https://img.shields.io/badge/license-MIT-FF4136?labelColor=gray)
 ![Language](https://img.shields.io/badge/Language-x86_64_Assembly-blue?labelColor=gray)
 ![Creator](https://img.shields.io/badge/Creator-Tonmoy_KS-7DF9FF?labelColor=gray)
 
-**Ame-No-Ohobari v.1.4.7(OUTDATED) – The God-Slayer**  
-_A pure hand-crafted assembly chess engine with advanced pruning, hashing, and full pawn promotion support._
+**Ame-No-Ohobari v.1.5.4 – The God-Slayer**  
+_A pure hand-crafted assembly chess engine featuring advanced search, hashing, tactical evaluation, and full pawn promotion support._
 
 ---
 
-## 🚀 Features (v.1.4.7)(OUTDATED)
+## 🚀 Features (v.1.5.4)
 
 - **Written in x86_64 Assembly:** No dependencies, maximum speed and control.
-- **Iterative Deepening with Aspiration Windows:** Smarter root search for best move.
-- **Transposition Table (TT):** 1 million-entry hash table for fast position lookup.
-- **Zobrist Hashing:** Fast and robust position identification.
-- **Full Static Exchange Evaluation (SEE):** Superior capture ordering, tactical blunder avoidance.
-- **Pawn Promotion:** Both white and black pawns can promote to Queen, Rook, Bishop, or Knight.
-- **Opening Book (stub):** Ready for binary opening book integration.
-- **Comprehensive Move Generation:** Knights, bishops, rooks, queens, kings, pawns, including all captures and promotions.
-- **King Safety Evaluation:** Assesses king zone for threats.
-- **UCI Output:** Prints the best move in standard UCI format (`bestmove g1f3`).
-- **No external libraries needed:** Just NASM and LD.
+- **Iterative Deepening with Aspiration Windows:** Smarter root search for optimal move selection.
+- **Transposition Table (TT):** 1 million-entry hash table for fast position lookup and pruning.
+- **Zobrist Hashing:** Fast, robust position identification for TT and repetition detection.
+- **Full Static Exchange Evaluation (SEE):** Orders captures by tactical safety, reducing blunders.
+- **Pawn Promotion:** Both colors, all major pieces supported (Queen, Rook, Bishop, Knight).
+- **Opening Book Ready:** Binary opening book path integrated (stub for future expansion).
+- **Advanced Move Generation:** Knights, bishops, rooks, queens, kings, pawns. All captures and promotions, tactical and quiet moves.
+- **King Safety Evaluation:** Evaluates threats in the king’s zone.
+- **UCI Protocol Support:** Communicates using standard UCI commands (`bestmove <move>`).
+- **Syzygy Tablebase Stub:** Structure in place for future integration.
+- **Optimized Assembly Macros:** Fast and flexible move generation.
+- **Modular & Commented Code:** Easier for contributors to extend and modify.
+- **No external libraries:** Just NASM and LD required to build and run.
 
 ---
 
@@ -50,41 +53,48 @@ bestmove g1f3
 ## 🧠 How It Works
 
 - **Board Representation:** 64-square array, bitwise piece/color encoding.
-- **Evaluation:** Material, piece-square tables, passed pawn bonuses, king safety, and more.
+- **Evaluation:** 
+  - Material, piece-square tables (PST), passed pawn bonuses, king safety, and more.
 - **Move Generation:**  
-  - Handles all normal moves and all pawn promotions.
-  - Accurate capture and quiet move generation.
+  - Handles all standard moves and all pawn promotions.
+  - Accurate generation for tactical, quiet, and special moves.
 - **Search:**  
   - Iterative deepening with aspiration windows for robust move selection.
-  - Alpha-beta negamax with principal variation and TT lookups.
-  - Quiescence search for tactical stability at leaf nodes.
+  - Alpha-beta negamax, principal variation search, and transposition table lookups.
+  - Quiescence search for stable tactical evaluation at leaf nodes.
 - **SEE for Captures:**  
-  - Orders captures by tactical safety using recursive static exchange logic.
+  - Recursive static exchange logic for tactical move ordering.
 - **Hashing:**  
-  - Zobrist hash for fast and reliable transposition table indexing.
+  - Zobrist hash for fast, reliable transposition table indexing.
+- **Tablebases:**  
+  - Basic structure for Syzygy probing (stubbed, ready for future implementation).
 - **Output:**  
-  - UCI-style move output for easy GUI integration.
+  - UCI-style move output for easy GUI and tool integration.
 
 ---
 
-## 🔥 What's New in v.1.4.7
+## 🔥 What's New in v.1.5.4
 
-- **Full Pawn Promotion Support:** Both colors, all major pieces.
-- **Improved SEE and Capture Ordering:** Minimizes tactical errors.
+- **Improved Search Algorithm:**
+  - Enhanced alpha-beta, principal variation search, and pruning techniques.
+  - Late Move Reductions (LMR) and Null Move Pruning (NMP) for deeper, faster search.
+- **Full Pawn Promotion Support:** Both colors, all promotion pieces.
+- **Optimized SEE and Capture Ordering:** Minimized tactical errors.
 - **Robust Transposition Table:** 1M entries for deep search acceleration.
-- **King Safety Evaluation:** Penalizes exposed kings in the zone.
-- **Opening Book Path and Loading (stubbed):** Ready for integration.
-- **Assembly Macros for Move Generation:** Fast and flexible.
-- **Better Modularization and Comments:** Easier for you (and others) to hack and extend.
+- **King Safety Evaluation:** More accurate risk assessment in the king's zone.
+- **Opening Book Integration Path:** Ready for binary opening book loading.
+- **Syzygy Tablebase Probe Structure:** In place for future endgame tablebase support.
+- **Assembly Macros:** Speedier and more flexible move generation.
+- **Better Modularization & Comments:** Easier for contributors to hack, extend, and maintain.
 
 ---
 
-## ⚠️ Limitations
+## ⚠️ Limitations & TODO
 
-- Castling, en passant, and some advanced rules are not yet implemented.
-- Opening book, Syzygy tablebase, and some evaluation components are stubbed.
-- Several functions are placeholders and can be implemented for full strength.
-- Not a finished competitive engine—ideal for learning, hacking, and extending.
+- Castling, en passant, and some advanced chess rules are not yet implemented.
+- Opening book, Syzygy tablebase, and some evaluation components are currently stubs.
+- Some functions are placeholders – can be improved for competitive strength.
+- Not a finished competitive engine—ideal for learning, hacking, and further development.
 
 ---
 
@@ -98,7 +108,7 @@ MIT License
 ## 🤝 Contributing
 
 Pull requests, optimizations, and bug fixes are welcome!  
-Open an issue for feature requests or suggestions.
+Open an issue for feature requests, suggestions, or questions.
 
 ---
 
