@@ -2,6 +2,7 @@
 ; AmeNoOhobari.asm - V.1.5.4 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
 ; Version: 1.5.4
+; Licence: MIT (by GitHub)
 ;
 ; How to Compile and Run (on Linux):
 ;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
