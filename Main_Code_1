@@ -1,8 +1,7 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.5.4 - The God-Slayer Chess Engine
+; AmeNoOhobari.asm - V.1.5.5 - The God-Slayer Chess Engine
 ; Author: Tonmoy KS
-; Version: 1.5.4
-; Licence: MIT (by GitHub)
+; Version: 1.5.5
 ;
 ; How to Compile and Run (on Linux):
 ;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
@@ -13,9 +12,25 @@
 ; ============================================================================
 
 ; --- Linux Syscall Numbers (x86_64) ---
-SYS_OPEN  equ 2
-SYS_MMAP  equ 9
+SYS_OPEN equ 2
+SYS_MMAP equ 9
 SYS_CLOSE equ 3
+SYS_CLONE       equ 56
+SYS_FUTEX       equ 202
+SYS_SCHED_GETAFFINITY equ 204 
+
+; --- Clone Flags (for creating threads) ---
+CLONE_VM        equ 0x00000100  ; Share address space
+CLONE_FILES     equ 0x00000400  ; Share open files
+CLONE_SIGHAND   equ 0x00000800  ; Share signal handlers
+CLONE_THREAD    equ 0x00010000  ; Place in same thread group
+CLONE_PARENT_SETTID equ 0x00100000
+CLONE_CHILD_CLEARTID equ 0x00200000
+CLONE_FLAGS     equ CLONE_VM | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID
+
+; --- Futex Operations ---
+FUTEX_WAIT      equ 0
+FUTEX_WAKE      equ 1
 
 ; --- mmap flags ---
 PROT_READ   equ 0x1
@@ -38,9 +53,23 @@ tablebase_files:
         at .size,     dq 0
     iend
     ; Add other tablebase definitions here in the future...
-
 ; A place to store the currently active table's pointer
 active_tb_pointer: dq 0
+
+%define MAX_THREADS 192           ; warning make sure if you change this to the actual thread count for your setup if you are a GitHub Contributor 
+%define STACK_SIZE  (2 * 1024 * 1024) ; 2MB stack per thread
+
+struc ThreadInfo
+    .state:         resd 1  ; 0=Idle, 1=Searching
+    .futex_var:     resd 1  ; Futex for this thread to wait on
+    .stack_base:    resq 1  ; Pointer to the BOTTOM of its mmap'd stack
+    .board_copy:    resb 80 ; Local board copy + state
+    .alpha:         resd 1
+    .beta:          resd 1
+    .depth:         resd 1
+    .score:         resd 1
+    ; Add other per-thread variables here as needed
+endstruc
 
 section .data
 EMPTY       equ 0; W_PAWN      equ 1; W_KNIGHT    equ 2; W_BISHOP    equ 3; W_ROOK      equ 4; W_QUEEN     equ 5; W_KING      equ 6
@@ -124,11 +153,19 @@ nodes_searched: resq 1
 move_scores: resd 256
 opening_book: resb 16 * 1024 * 1024
 book_size: resq 1
+uci_input_buffer: resb 4096 ; Buffer for long UCI commands
+token_pointer:    resq 1   
 fen_buffer: resb 100
 best_score_prev_iter: resd 1
 zobrist_hash: resq 1
 TT_SIZE: equ 1024 * 1024 ; 1 Million entries
 transposition_table: resb TT_SIZE * 16
+    ; --- Thread Management ---
+    threads:        istruc ThreadInfo, MAX_THREADS
+    num_threads:    resq 1
+    is_searching:   resb 1
+    cpu_set:        resb 128 ; Buffer for the affinity mask (1024 bits)
+
 section .text
 extern probe_syzygy_wdl_from_fen
 global _start
@@ -147,10 +184,38 @@ global _start
     add rdi, 4
     mov [move_list_end], rdi
 %endmacro
+section .text
 
-section .bss
-uci_input_buffer: resb 4096 ; Buffer for long UCI commands
-token_pointer:    resq 1   ; Pointer for our strtok-like function
+; --- Spinlock Mutex for TT ---
+; rdi = pointer to lock variable
+acquire_lock:
+.retry:
+    lock bts qword [rdi], 0 ; Atomically test and set bit 0
+    jc .retry               ; If bit was already set, spin
+    ret
+
+release_lock:
+    lock btr qword [rdi], 0 ; Atomically clear bit 0
+    ret
+
+; --- Futex Wrappers ---
+; Puts the current thread to sleep until its futex is woken.
+; rdi = pointer to futex variable, rsi = expected value
+futex_wait:
+    mov rax, SYS_FUTEX
+    mov rdx, FUTEX_WAIT
+    mov r10, 0          ; No timeout
+    syscall
+    ret
+
+; Wakes one thread sleeping on a futex.
+; rdi = pointer to futex variable
+futex_wake:
+    mov rax, SYS_FUTEX
+    mov rsi, FUTEX_WAKE
+    mov rdx, 1          ; Wake up 1 thread
+    syscall
+    ret
 
 section .data
 uci_cmd_uci:        db "uci",0
@@ -177,6 +242,64 @@ uci_response_readyok:db "readyok",10,0
 section .text
 global _start
 _start:
+; --- Lazy SMP ---
+    ; --- 1. Determine number of available cores via syscall ---
+    mov rax, SYS_SCHED_GETAFFINITY
+    mov rdi, 0                      ; pid = 0 (current process)
+    mov rsi, 128                    ; size of our buffer
+    lea rdx, [cpu_set]              ; pointer to our buffer
+    syscall                         ; The kernel fills our cpu_set buffer
+
+    ; --- 2. Count the set bits in the mask to get the CPU count ---
+    ; The mask is a bitmap. We count the '1's using POPCNT.
+    ; The buffer is 128 bytes, so we do two 64-bit popcounts.
+    popcnt rax, [cpu_set]           ; Count bits in the first 64 bits
+    popcnt rbx, [cpu_set + 8]       ; Count bits in the next 64 bits
+    add rax, rbx                    ; Total core count is in rax
+    mov [num_threads], rax
+
+    ; --- 3. Create Helper Threads (num_threads - 1) ---
+    mov r12, 1                      ; Helper thread index (master is 0)
+.create_thread_loop:
+    cmp r12, [num_threads]
+    jge .master_thread_start
+
+    ; 3a. Allocate a stack for the new thread via mmap
+    mov rax, SYS_MMAP
+    mov rdi, 0
+    mov rsi, STACK_SIZE
+    mov rdx, 3                      ; PROT_READ | PROT_WRITE
+    mov r10, 34                     ; MAP_PRIVATE | MAP_ANONYMOUS
+    mov r8, -1
+    mov r9, 0
+    syscall                         ; rax = pointer to bottom of stack
+
+    lea rbx, [threads + r12 * ThreadInfo_size]
+    mov [rbx + ThreadInfo.stack_base], rax ; Save bottom for munmap later
+
+    ; 3b. Calculate the TOP of the stack for the clone syscall
+    add rax, STACK_SIZE
+    sub rax, 16                     ; Align stack pointer to 16 bytes
+
+    ; 3c. Create the thread using clone
+    mov rdi, CLONE_FLAGS            ; clone flags
+    mov rsi, rax                    ; New stack pointer (TOP)
+    lea rdx, [rbx + ThreadInfo.state] ; parent tid
+    lea r10, [rbx + ThreadInfo.state] ; child tid (futex)
+    ; In x86_64, the 5th syscall argument goes in r8
+    mov r8, rbx                     ; Pass pointer to ThreadInfo struct as argument
+    mov rax, SYS_CLONE
+    syscall                         ; New thread starts execution at helper_entry
+
+    inc r12
+    jmp .create_thread_loop
+
+.master_thread_start:
+    ; This is the MASTER THREAD. It proceeds to the UCI loop.
+    call initialize_engine          ; Only master initializes global state
+    jmp .main_loop                  
+
+; --- UCI loop ---
 .main_loop:
     ; Read a command from stdin
     mov rax, 0 ; sys_read
