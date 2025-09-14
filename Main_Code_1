@@ -1,14 +1,11 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.5.5 - The God-Slayer Chess Engine
-; Author: Tonmoy KS
-; Version: 1.5.5
+; AmeNoOhobari.asm - V.1.5.6 - The God-Slayer Chess Engine
+; Version: 1.5.6
 ;
 ; How to Compile and Run (on Linux):
 ;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
 ;   ld AmeNoOhobari.o -o AmeNoOhobari
 ;   ./AmeNoOhobari
-;
-; Expected Output: bestmove g1f3
 ; ============================================================================
 
 ; --- Linux Syscall Numbers (x86_64) ---
@@ -16,14 +13,18 @@ SYS_OPEN equ 2
 SYS_MMAP equ 9
 SYS_CLOSE equ 3
 SYS_CLONE       equ 56
+SYS_GETTIMEOFDAY equ 96
 SYS_FUTEX       equ 202
-SYS_SCHED_GETAFFINITY equ 204 
+SYS_SCHED_GETAFFINITY equ 204
+
+; --- File Open Flags ---
+%define O_RDONLY 0
 
 ; --- Clone Flags (for creating threads) ---
-CLONE_VM        equ 0x00000100  ; Share address space
-CLONE_FILES     equ 0x00000400  ; Share open files
-CLONE_SIGHAND   equ 0x00000800  ; Share signal handlers
-CLONE_THREAD    equ 0x00010000  ; Place in same thread group
+CLONE_VM        equ 0x00000100
+CLONE_FILES     equ 0x00000400
+CLONE_SIGHAND   equ 0x00000800
+CLONE_THREAD    equ 0x00010000
 CLONE_PARENT_SETTID equ 0x00100000
 CLONE_CHILD_CLEARTID equ 0x00200000
 CLONE_FLAGS     equ CLONE_VM | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID
@@ -37,39 +38,34 @@ PROT_READ   equ 0x1
 MAP_PRIVATE equ 0x2
 
 ; --- Tablebase File Information ---
-; We will create a list of structs to manage our TB files.
-; For this example, we only define one for KRPvK.
 struc tb_file
     .filename: resb 64
-    .pointer:  resq 1  ; Will hold the memory-mapped address
+    .pointer:  resq 1
     .size:     resq 1
 endstruc
 
 tablebase_files:
-    ; KRPvK WDL table
     istruc tb_file
         at .filename, db "KRPvK.rtbw", 0
         at .pointer,  dq 0
         at .size,     dq 0
     iend
-    ; Add other tablebase definitions here in the future...
-; A place to store the currently active table's pointer
 active_tb_pointer: dq 0
 
-%define MAX_THREADS 192           ; warning make sure if you change this to the actual thread count for your setup if you are a GitHub Contributor 
-%define STACK_SIZE  (2 * 1024 * 1024) ; 2MB stack per thread
+%define MAX_THREADS 192
+%define STACK_SIZE  (2 * 1024 * 1024)
 
 struc ThreadInfo
-    .state:         resd 1  ; 0=Idle, 1=Searching
-    .futex_var:     resd 1  ; Futex for this thread to wait on
-    .stack_base:    resq 1  ; Pointer to the BOTTOM of its mmap'd stack
-    .board_copy:    resb 80 ; Local board copy + state
+    .state:         resd 1
+    .futex_var:     resd 1
+    .stack_base:    resq 1
+    .board_copy:    resb 80
     .alpha:         resd 1
     .beta:          resd 1
     .depth:         resd 1
     .score:         resd 1
-    ; Add other per-thread variables here as needed
 endstruc
+%define ThreadInfo_size (SIZEOF.ThreadInfo)
 
 section .data
 EMPTY       equ 0; W_PAWN      equ 1; W_KNIGHT    equ 2; W_BISHOP    equ 3; W_ROOK      equ 4; W_QUEEN     equ 5; W_KING      equ 6
@@ -132,7 +128,7 @@ zobrist_keys:
     piece_keys: times 64 * 12 dq 0
     side_key: dq 0
     castling_keys: times 16 dq 0
-    en_passant_keys: times 8 dq 0 
+    en_passant_keys: times 8 dq 0
 opening_book_path: db "book.bin", 0
 bestmove_msg: db "bestmove "
 len_bestmove_msg: equ $ - bestmove_msg
@@ -141,83 +137,6 @@ square_to_an: db "a1b1c1d1e1f1g1h1a2b2c2d2e2f2g2h2a3b3c3d3e3f3g3h3a4b4c4d4e4f4g4
 fen_pieces: db "PNBRQK  pnbrqk"
 lcg_seed: dq 123456789123456789
 
-section .bss
-board: resb 64
-side_to_move: resb 1
-castling_rights: resb 1
-en_passant_square: resb 1
-move_list: resb 256 * 4
-move_list_end: resq 1
-root_best_move: resd 1
-nodes_searched: resq 1
-move_scores: resd 256
-opening_book: resb 16 * 1024 * 1024
-book_size: resq 1
-uci_input_buffer: resb 4096 ; Buffer for long UCI commands
-token_pointer:    resq 1   
-fen_buffer: resb 100
-best_score_prev_iter: resd 1
-zobrist_hash: resq 1
-TT_SIZE: equ 1024 * 1024 ; 1 Million entries
-transposition_table: resb TT_SIZE * 16
-    ; --- Thread Management ---
-    threads:        istruc ThreadInfo, MAX_THREADS
-    num_threads:    resq 1
-    is_searching:   resb 1
-    cpu_set:        resb 128 ; Buffer for the affinity mask (1024 bits)
-
-section .text
-extern probe_syzygy_wdl_from_fen
-global _start
-
-%macro ADD_MOVE 2
-    mov rdi, [move_list_end]
-    mov byte [rdi], %1; mov byte [rdi+1], %2; add rdi, 4; mov [move_list_end], rdi
-%endmacro
-
-%macro ADD_PROMOTION_MOVE 3 ; from, to, promotion_piece
-    mov rdi, [move_list_end]
-    mov byte [rdi], %1
-    mov byte [rdi+1], %2
-    mov byte [rdi+2], %3  ; Store the promotion piece
-    mov byte [rdi+3], 0   ; Clear the 4th byte
-    add rdi, 4
-    mov [move_list_end], rdi
-%endmacro
-section .text
-
-; --- Spinlock Mutex for TT ---
-; rdi = pointer to lock variable
-acquire_lock:
-.retry:
-    lock bts qword [rdi], 0 ; Atomically test and set bit 0
-    jc .retry               ; If bit was already set, spin
-    ret
-
-release_lock:
-    lock btr qword [rdi], 0 ; Atomically clear bit 0
-    ret
-
-; --- Futex Wrappers ---
-; Puts the current thread to sleep until its futex is woken.
-; rdi = pointer to futex variable, rsi = expected value
-futex_wait:
-    mov rax, SYS_FUTEX
-    mov rdx, FUTEX_WAIT
-    mov r10, 0          ; No timeout
-    syscall
-    ret
-
-; Wakes one thread sleeping on a futex.
-; rdi = pointer to futex variable
-futex_wake:
-    mov rax, SYS_FUTEX
-    mov rsi, FUTEX_WAKE
-    mov rdx, 1          ; Wake up 1 thread
-    syscall
-    ret
-
-section .data
 uci_cmd_uci:        db "uci",0
 uci_cmd_isready:    db "isready",0
 uci_cmd_ucinewgame: db "ucinewgame",0
@@ -233,86 +152,122 @@ uci_cmd_wtime:      db "wtime",0
 uci_cmd_btime:      db "btime",0
 uci_cmd_winc:       db "winc",0
 uci_cmd_binc:       db "binc",0
+uci_cmd_infinite:   db "infinite",0
 
-uci_response_id:    db "id name AmeNoOhobari v1.5.4",10,0
+uci_response_id:    db "id name AmeNoOhobari v1.5.6",10,0
 uci_response_author:db "id author Tonmoy-KS",10,0
 uci_response_uciok: db "uciok",10,0
 uci_response_readyok:db "readyok",10,0
 
-section .text
-global _start
-_start:
-; --- Lazy SMP ---
-    ; --- 1. Determine number of available cores via syscall ---
-    mov rax, SYS_SCHED_GETAFFINITY
-    mov rdi, 0                      ; pid = 0 (current process)
-    mov rsi, 128                    ; size of our buffer
-    lea rdx, [cpu_set]              ; pointer to our buffer
-    syscall                         ; The kernel fills our cpu_set buffer
+section .bss
+board: resb 64
+side_to_move: resb 1
+castling_rights: resb 1
+en_passant_square: resb 1
+move_list: resb 256 * 4
+move_list_end: resq 1
+root_best_move: resd 1
+nodes_searched: resq 1
+move_scores: resd 256
+opening_book: resb 16 * 1024 * 1024
+book_size: resq 1
+uci_input_buffer: resb 4096
+token_pointer:    resq 1
+fen_buffer: resb 100
+best_score_prev_iter: resd 1
+zobrist_hash: resq 1
+TT_SIZE: equ 1024 * 1024
+transposition_table: resb TT_SIZE * 16
 
-    ; --- 2. Count the set bits in the mask to get the CPU count ---
-    ; The mask is a bitmap. We count the '1's using POPCNT.
-    ; The buffer is 128 bytes, so we do two 64-bit popcounts.
-    popcnt rax, [cpu_set]           ; Count bits in the first 64 bits
-    popcnt rbx, [cpu_set + 8]       ; Count bits in the next 64 bits
-    add rax, rbx                    ; Total core count is in rax
+; --- Time Management Variables ---
+search_start_time_ms: resq 1
+search_stop_time_ms:  resq 1
+timeval_struct:       resq 2
+
+; --- Thread Management ---
+threads:        istruc ThreadInfo, MAX_THREADS
+num_threads:    resq 1
+is_searching:   resb 1
+cpu_set:        resb 128
+
+section .text
+extern probe_syzygy_wdl_from_fen
+global _start
+
+%macro ADD_MOVE 2
+    mov rdi, [move_list_end]
+    mov byte [rdi], %1
+    mov byte [rdi+1], %2
+    mov dword [rdi+2], 0 ; Clear promo/flag bytes
+    add rdi, 4
+    mov [move_list_end], rdi
+%endmacro
+
+%macro ADD_PROMOTION_MOVE 4 ; from, to, promo_piece, flag
+    mov rdi, [move_list_end]
+    mov byte [rdi], %1
+    mov byte [rdi+1], %2
+    mov byte [rdi+2], %3
+    mov byte [rdi+3], %4
+    add rdi, 4
+    mov [move_list_end], rdi
+%endmacro
+
+_start:
+    ; --- Lazy SMP: Determine core count and create threads ---
+    mov rax, SYS_SCHED_GETAFFINITY
+    mov rdi, 0
+    mov rsi, 128
+    lea rdx, [cpu_set]
+    syscall
+    popcnt rax, [cpu_set]
+    popcnt rbx, [cpu_set + 8]
+    add rax, rbx
     mov [num_threads], rax
 
-    ; --- 3. Create Helper Threads (num_threads - 1) ---
-    mov r12, 1                      ; Helper thread index (master is 0)
+    mov r12, 1
 .create_thread_loop:
     cmp r12, [num_threads]
     jge .master_thread_start
-
-    ; 3a. Allocate a stack for the new thread via mmap
     mov rax, SYS_MMAP
     mov rdi, 0
     mov rsi, STACK_SIZE
-    mov rdx, 3                      ; PROT_READ | PROT_WRITE
-    mov r10, 34                     ; MAP_PRIVATE | MAP_ANONYMOUS
+    mov rdx, 3
+    mov r10, 34
     mov r8, -1
     mov r9, 0
-    syscall                         ; rax = pointer to bottom of stack
-
+    syscall
     lea rbx, [threads + r12 * ThreadInfo_size]
-    mov [rbx + ThreadInfo.stack_base], rax ; Save bottom for munmap later
-
-    ; 3b. Calculate the TOP of the stack for the clone syscall
+    mov [rbx + ThreadInfo.stack_base], rax
     add rax, STACK_SIZE
-    sub rax, 16                     ; Align stack pointer to 16 bytes
-
-    ; 3c. Create the thread using clone
-    mov rdi, CLONE_FLAGS            ; clone flags
-    mov rsi, rax                    ; New stack pointer (TOP)
-    lea rdx, [rbx + ThreadInfo.state] ; parent tid
-    lea r10, [rbx + ThreadInfo.state] ; child tid (futex)
-    ; In x86_64, the 5th syscall argument goes in r8
-    mov r8, rbx                     ; Pass pointer to ThreadInfo struct as argument
+    sub rax, 16
+    mov rdi, CLONE_FLAGS
+    mov rsi, rax
+    lea rdx, [rbx + ThreadInfo.state]
+    lea r10, [rbx + ThreadInfo.state]
+    mov r8, rbx
     mov rax, SYS_CLONE
-    syscall                         ; New thread starts execution at helper_entry
-
+    syscall
     inc r12
     jmp .create_thread_loop
 
 .master_thread_start:
-    ; This is the MASTER THREAD. It proceeds to the UCI loop.
-    call initialize_engine          ; Only master initializes global state
-    jmp .main_loop                  
+    call initialize_engine
+    jmp .main_loop
 
-; --- UCI loop ---
+; --- Main UCI Loop ---
 .main_loop:
-    ; Read a command from stdin
+    mov byte [token_pointer], 0 ; Reset token parser for each new line
     mov rax, 0 ; sys_read
     mov rdi, 0 ; stdin
     mov rsi, uci_input_buffer
     mov rdx, 4096
     syscall
 
-    mov rdi, uci_input_buffer
     call parse_token
-    mov rdi, rax ; rdi now points to the first word
-    
-    ; Dispatch command
+    mov rdi, rax
+    cmp rdi, 0; je .main_loop ; Empty line
+
     mov rsi, uci_cmd_uci; call strcmp; test rax, rax; jz .handle_uci
     mov rsi, uci_cmd_isready; call strcmp; test rax, rax; jz .handle_isready
     mov rsi, uci_cmd_ucinewgame; call strcmp; test rax, rax; jz .handle_ucinewgame
@@ -326,12 +281,15 @@ _start:
     mov rsi, uci_response_author; call print_string
     mov rsi, uci_response_uciok; call print_string
     jmp .main_loop
+
 .handle_isready:
     mov rsi, uci_response_readyok; call print_string
     jmp .main_loop
+
 .handle_ucinewgame:
     call initialize_board
     jmp .main_loop
+
 .handle_quit:
     mov rax, 60; xor rdi, rdi; syscall
 
@@ -341,51 +299,92 @@ _start:
     mov rsi, uci_cmd_startpos; call strcmp
     test rax, rax; jz .pos_startpos
     ; TODO: Implement FEN parsing
-    jmp .main_loop ; For now, skip FEN
+    jmp .main_loop
 .pos_startpos:
     call initialize_board
 .parse_moves:
     call parse_token
-    cmp rax, 0; je .main_loop ; No more tokens
+    cmp rax, 0; je .main_loop
     mov rdi, rax
     mov rsi, uci_cmd_moves; call strcmp
-    test rax, rax; jne .main_loop ; Not the "moves" keyword, so we're done
+    test rax, rax; jne .main_loop
 .moves_loop:
     call parse_token
     cmp rax, 0; je .main_loop
     mov rdi, rax
     call parse_uci_move
-    ; parse_uci_move returns move data in rax
-    ; make_move expects it in r10, so we use a temp buffer
-    mov [move_list], rax
-    mov r10, move_list
+    mov r10, rax
     call make_move
     jmp .moves_loop
 
 .handle_go:
-    ; Parse go parameters
-    xor r8, r8 ; depth
-    xor r9, r9 ; movetime
+    mov r8, 100; xor r9, r9; xor r12, r12; xor r13, r13; xor r14, r14; xor r15, r15; xor rcx, rcx
 .go_loop:
     call parse_token
-    cmp rax, 0; je .do_search
+    cmp rax, 0; je .calculate_time_and_search
     mov rdi, rax
-    mov rsi, uci_cmd_depth; call strcmp
-    test rax, rax; jne .check_movetime
-    call parse_token; mov rdi, rax; call parse_int; mov r8, rax
-    jmp .go_loop
+    mov rsi, uci_cmd_depth; call strcmp; test rax, rax; jne .check_movetime
+    call parse_token; mov rdi, rax; call parse_int; mov r8, rax; jmp .go_loop
 .check_movetime:
-    mov rsi, uci_cmd_movetime; call strcmp
-    test rax, rax; jne .go_loop
-    call parse_token; mov rdi, rax; call parse_int; mov r9, rax
-    jmp .go_loop
-.do_search:
-    ; For now, we only use depth. A full impl would use time controls.
+    mov rsi, uci_cmd_movetime; call strcmp; test rax, rax; jne .check_wtime
+    call parse_token; mov rdi, rax; call parse_int; mov r9, rax; jmp .go_loop
+.check_wtime:
+    mov rsi, uci_cmd_wtime; call strcmp; test rax, rax; jne .check_btime
+    call parse_token; mov rdi, rax; call parse_int; mov r12, rax; jmp .go_loop
+.check_btime:
+    mov rsi, uci_cmd_btime; call strcmp; test rax, rax; jne .check_winc
+    call parse_token; mov rdi, rax; call parse_int; mov r13, rax; jmp .go_loop
+.check_winc:
+    mov rsi, uci_cmd_winc; call strcmp; test rax, rax; jne .check_binc
+    call parse_token; mov rdi, rax; call parse_int; mov r14, rax; jmp .go_loop
+.check_binc:
+    mov rsi, uci_cmd_binc; call strcmp; test rax, rax; jne .check_infinite
+    call parse_token; mov rdi, rax; call parse_int; mov r15, rax; jmp .go_loop
+.check_infinite:
+    mov rsi, uci_cmd_infinite; call strcmp; test rax, rax; jne .go_loop
+    mov rcx, 1; jmp .go_loop
+
+.calculate_time_and_search:
+    mov rax, -1
+    cmp r9, 0; jne .set_movetime
+    cmp rcx, 1; je .set_infinite_time
+    cmp r12, 0; je .no_time_control
+    mov al, [side_to_move]; test al, al; jz .white_time_calc
+    mov rax, r13; mov rbx, 25; div rbx; add rax, r15; jmp .time_is_set
+.white_time_calc:
+    mov rax, r12; mov rbx, 25; div rbx; add rax, r14; jmp .time_is_set
+.set_movetime:
+    mov rax, r9; jmp .time_is_set
+.set_infinite_time:
+    mov rax, -1; jmp .time_is_set
+.no_time_control:
+    mov rax, -1
+.time_is_set:
+    cmp rax, -1; je .start_search_no_time_limit
+    mov rdi, rax
+    call get_current_time_ms
+    mov [search_start_time_ms], rax
+    add rax, rdi
+    mov [search_stop_time_ms], rax
+    jmp .start_search
+.start_search_no_time_limit:
+    mov qword [search_stop_time_ms], 0x7FFFFFFFFFFFFFFF
+.start_search:
     mov edi, r8d
     call iterative_deepening
     call print_best_move
     jmp .main_loop
 
+; --- Helper thread entry point ---
+helper_entry:
+    mov r12, rdi
+.wait_loop:
+    mov rdi, [r12 + ThreadInfo.futex_var]
+    mov rsi, 0
+    call futex_wait
+    jmp .wait_loop
+
+; --- Engine Initialization and Search Functions ---
 initialize_engine:
     call initialize_board
     call initialize_zobrist_keys
@@ -393,32 +392,35 @@ initialize_engine:
     ret
 
 iterative_deepening:
-    ; edi now contains the max depth from the "go depth X" command
-    ; If no depth was given, edi will be 0.
-    test edi, edi
-    jnz .use_uci_depth
-    mov edi, 100 ; Default to max depth 100 if none specified
-.use_uci_depth:
     mov dword [best_score_prev_iter], 0
     mov ecx, 1
 .depth_loop:
-    cmp ecx, edi ; Loop up to the requested depth
+    call get_current_time_ms
+    cmp rax, [search_stop_time_ms]
+    jge .id_done
+    cmp ecx, edi
     jg .id_done
     mov edx, [best_score_prev_iter]
     mov esi, edx; sub esi, 50; add edx, 50
+    mov r15d, ecx
     mov edi, ecx
     call search_root
     cmp eax, esi; jle .research_low
     cmp eax, edx; jge .research_high
     jmp .store_results
 .research_low:
-    mov esi, -30000; mov edi, ecx; call search_root; jmp .store_results
+    mov esi, -30000; mov edi, r15d; call search_root; jmp .store_results
 .research_high:
-    mov edx, 30000; mov edi, ecx; call search_root
+    mov edx, 30000; mov edi, r15d; call search_root
 .store_results:
     mov [best_score_prev_iter], eax
-    inc ecx; jmp .depth_loop
-.id_done: ret
+    call get_current_time_ms
+    cmp rax, [search_stop_time_ms]
+    jge .id_done
+    inc ecx
+    jmp .depth_loop
+.id_done:
+    ret
 
 search_root:
     push r12; push r13; push r14; push r15
@@ -1310,6 +1312,182 @@ evaluate_king_safety:
     jmp .open_file_loop
 .ks_helper_done:
     pop r9; pop rsi; pop rdi; pop rdx; pop rcx; pop rbx
+    ret
+
+; --- Utility and Helper Functions ---
+
+;--------------------------------------------------------------------------
+; get_current_time_ms() -> rax (current time in milliseconds)
+;--------------------------------------------------------------------------
+get_current_time_ms:
+    push rdi; push rsi; push rbx; push rcx; push rdx
+    mov rax, SYS_GETTIMEOFDAY
+    lea rdi, [timeval_struct]
+    mov rsi, 0
+    syscall
+    mov rax, [timeval_struct]
+    mov rdx, [timeval_struct+8]
+    mov rbx, 1000
+    mul rbx
+    mov rcx, rax
+    mov rax, rdx
+    xor rdx, rdx
+    div rbx
+    add rax, rcx
+    pop rdx; pop rcx; pop rbx; pop rsi; pop rdi
+    ret
+
+;--------------------------------------------------------------------------
+; strcmp(rdi: str1, rsi: str2) -> rax (0 if equal)
+;--------------------------------------------------------------------------
+strcmp:
+    push rsi; push rdi
+.loop:
+    mov al, [rdi]; mov bl, [rsi]; cmp al, bl; jne .notequal
+    test al, al; jz .equal; inc rdi; inc rsi; jmp .loop
+.notequal:
+    mov rax, 1; jmp .done
+.equal:
+    xor rax, rax
+.done:
+    pop rdi; pop rsi; ret
+
+;--------------------------------------------------------------------------
+; parse_token() -> rax (pointer to next token or 0)
+;--------------------------------------------------------------------------
+parse_token:
+    mov rsi, [token_pointer]
+    cmp rsi, 0; jne .start_parse
+    mov rsi, uci_input_buffer
+.start_parse:
+.skip_whitespace:
+    mov al, [rsi]; test al, al; jz .no_more_tokens
+    cmp al, ' '; je .is_whitespace
+    cmp al, 10; je .is_whitespace
+    cmp al, 13; je .is_whitespace
+    jmp .found_token_start
+.is_whitespace:
+    inc rsi; jmp .skip_whitespace
+.found_token_start:
+    mov rax, rsi
+.find_token_end:
+    inc rsi; mov al, [rsi]; test al, al; jz .end_of_string
+    cmp al, ' '; je .end_found
+    cmp al, 10; je .end_found
+    cmp al, 13; je .end_found
+    jmp .find_token_end
+.end_found:
+    mov byte [rsi], 0; inc rsi; mov [token_pointer], rsi; ret
+.end_of_string:
+    mov [token_pointer], rsi; ret
+.no_more_tokens:
+    xor rax, rax; ret
+
+;--------------------------------------------------------------------------
+; parse_int(rdi: string) -> rax (integer value)
+;--------------------------------------------------------------------------
+parse_int:
+    xor rax, rax
+.loop:
+    movzx rcx, byte [rdi]; cmp rcx, '0'; jl .done; cmp rcx, '9'; jg .done
+    sub rcx, '0'; imul rax, 10; add rax, rcx; inc rdi; jmp .loop
+.done:
+    ret
+
+;--------------------------------------------------------------------------
+; print_string(rsi: string) -> void
+;--------------------------------------------------------------------------
+print_string:
+    push rax; push rdi; push rsi; push rdx; push rcx
+    mov rdi, rsi; xor rax, rax; mov rcx, -1; repne scasb
+    not rcx; dec rcx; mov rdx, rcx
+    mov rax, 1; mov rdi, 1; syscall
+    pop rcx; pop rdx; pop rsi; pop rdi; pop rax; ret
+
+;--------------------------------------------------------------------------
+; parse_uci_move(rdi: string) -> rax (4-byte packed move)
+;--------------------------------------------------------------------------
+parse_uci_move:
+    push rbx; push rcx; push rdx
+    movzx rax, byte [rdi]; sub rax, 'a'
+    movzx rbx, byte [rdi+1]; sub rbx, '1'
+    imul rbx, 8; add rax, rbx
+    movzx rcx, byte [rdi+2]; sub rcx, 'a'
+    movzx rdx, byte [rdi+3]; sub rdx, '1'
+    imul rdx, 8; add rcx, rdx
+    shl rcx, 8; or rax, rcx
+    movzx rbx, byte [rdi+4]; test rbx, rbx; jz .done
+    mov rcx, [side_to_move]; test rcx, rcx; jnz .black_promo
+.white_promo:
+    cmp bl, 'q'; je .set_promo_q; cmp bl, 'r'; je .set_promo_r
+    cmp bl, 'b'; je .set_promo_b; cmp bl, 'n'; je .set_promo_n
+    jmp .done
+.set_promo_q: mov rdx, W_QUEEN; jmp .promo
+.set_promo_r: mov rdx, W_ROOK; jmp .promo
+.set_promo_b: mov rdx, W_BISHOP; jmp .promo
+.set_promo_n: mov rdx, W_KNIGHT; jmp .promo
+.black_promo:
+    cmp bl, 'q'; je .set_promo_bq; cmp bl, 'r'; je .set_promo_br
+    cmp bl, 'b'; je .set_promo_bb; cmp bl, 'n'; je .set_promo_bn
+    jmp .done
+.set_promo_bq: mov rdx, B_QUEEN; jmp .promo
+.set_promo_br: mov rdx, B_ROOK; jmp .promo
+.set_promo_bb: mov rdx, B_BISHOP; jmp .promo
+.set_promo_bn: mov rdx, B_KNIGHT; jmp .promo
+.promo:
+    shl rdx, 16; or rax, rdx
+.done:
+    pop rdx; pop rcx; pop rbx; ret
+
+; --- Spinlock, Futex, and other system-level functions ---
+; (The rest of the functions from your file go here)
+
+search_root:
+    push r12; push r13; push r14; push r15
+    mov r12d, esi             ; r12d = alpha
+    mov r13d, edx             ; r13d = beta
+    mov r15, rdi              ; r15 = depth
+    mov dword [root_best_move], 0
+    mov qword [nodes_searched], 0
+    call generate_moves
+    call score_moves
+    mov r11, 0                ; move_index
+    mov r9d, -30001           ; best_score
+.move_loop:
+    mov r10, [move_list_end]; sub r10, move_list; shr r10, 2; cmp r11, r10
+    jge .done_searching
+    call find_next_best_move
+    mov r10, rax ; find_next_best_move returns the move data now, not an index
+    call make_move
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    call is_king_in_check
+    mov al, [side_to_move]; xor al, 8; mov [side_to_move], al
+    test al, al
+    jnz .illegal_root_move
+    mov rdi, r15; dec rdi
+    mov esi, r13d; neg esi
+    mov edx, r12d; neg edx
+    call negamax
+    neg eax
+    call unmake_move
+    cmp eax, r12d
+    jle .next_move_in_loop
+    mov r12d, eax
+    mov r9d, eax
+    movzx ecx, byte[r10]
+    movzx edx, byte[r10+1]
+    mov ch, dl
+    mov cl, cl
+    mov [root_best_move], cx
+    jmp .next_move_in_loop
+.illegal_root_move:
+    call unmake_move
+.next_move_in_loop:
+    inc r11
+    jmp .move_loop
+.done_searching:
+    mov eax, r9d
+    pop r15; pop r14; pop r13; pop r12
     ret
 
 ; Helper: find_piece(rdi: piece_code) -> rax (square or -1)
