@@ -1,11 +1,12 @@
 ; ============================================================================
-; AmeNoOhobari.asm - V.1.5.6 - The God-Slayer Chess Engine
+; Kusanagi.asm - V.1.5.6 - Rebranded Ame-No-Ohobari Engine
 ; Version: 1.5.6
+; Author: tonmoy ks
 ;
 ; How to Compile and Run (on Linux):
-;   nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
-;   ld AmeNoOhobari.o -o AmeNoOhobari
-;   ./AmeNoOhobari
+;   nasm -f elf64 -g Kusanagi.asm -o Kusanagi.o
+;   ld Kusanagi.o -o Kusanagi
+;   ./Kusanagi
 ; ============================================================================
 
 ; --- Linux Syscall Numbers (x86_64) ---
@@ -154,7 +155,7 @@ uci_cmd_winc:       db "winc",0
 uci_cmd_binc:       db "binc",0
 uci_cmd_infinite:   db "infinite",0
 
-uci_response_id:    db "id name AmeNoOhobari v1.5.6",10,0
+uci_response_id:    db "id name Kusanagi v1.5.6",10,0
 uci_response_author:db "id author Tonmoy-KS",10,0
 uci_response_uciok: db "uciok",10,0
 uci_response_readyok:db "readyok",10,0
@@ -869,24 +870,24 @@ is_move_on_board:
     push rdx
     push rcx
     mov rcx, 8
-    
+
     mov rdi, rax
     xor rdx, rdx
     div rcx             ; from_file in rdx
     push rdx
-    
+
     mov rdi, rbx
     xor rdx, rdx
     div rcx             ; to_file in rdx
-    
+
     pop rcx             ; pop from_file into rcx
     sub rdx, rcx        ; diff = to_file - from_file
-    
+
     cmp rdx, 2
     jg .move_wraps
     cmp rdx, -2
     jl .move_wraps
-    
+
     mov rax, 1
     jmp .util_done
 .move_wraps:
@@ -1693,7 +1694,7 @@ probe_tablebase:
     ; --- 1. Identify Position and Find Correct Table ---
     ; For this example, we hard-code the check for KRPvK.
     ; A full implementation would loop through `tablebase_files`.
-    
+
     ; Count pieces
     mov r8, 0 ; piece_count
     mov r9, 0 ; piece_signature
@@ -1718,7 +1719,7 @@ probe_tablebase:
     mov r10, 0
     bts r10, W_KING; bts r10, W_ROOK; bts r10, W_PAWN
     bts r10, B_KING
-    
+
     cmp r9, r10 ; Does the signature match KRPvK?
     jne .not_found
 
@@ -1728,7 +1729,7 @@ probe_tablebase:
     mov rbx, [rdi + tb_file.pointer]
     test rbx, rbx ; Is it already mapped?
     jnz .table_ready
-    
+
     ; If not, map it
     call mmap_table
     test rax, rax ; Check for error from mmap
@@ -1749,7 +1750,7 @@ probe_tablebase:
     mov rcx, rax ; rcx = index
     shr rax, 2   ; index / 4 to get the byte index
     add rbx, rax ; rbx = pointer to the correct byte in the file
-    
+
     and rcx, 3   ; index % 4 to get the pair index within the byte
     shl rcx, 1   ; * 2 to get the bit index
 
@@ -2050,7 +2051,7 @@ find_book_move:
     mov rdi, r9 ; rdi = total_weight
     call weighted_choice
     mov rcx, rax ; rcx = chosen random weight
-    
+
     mov r10, move_list
 .selection_loop:
     mov ax, [r10+2] ; ax = current move's weight
@@ -2319,7 +2320,7 @@ generate_king_moves:
     mov al, [side_to_move]
     test al, al
     jnz .check_black_castle
-    
+
     ; Check White Kingside (O-O)
     movzx ebx, byte [castling_rights]
     test bl, W_OO_RIGHT
@@ -2486,14 +2487,14 @@ unmake_move:
 
     pop rax; mov [en_passant_square], al
     pop rax; mov [castling_rights], al
-    
+
     mov cl, byte [board+r9]
     mov [r8], cl
     mov byte [board+r9], EMPTY
 
     pop rax
     pop rax
-    
+
     cmp al, EMPTY
     jne .restore_normal_capture
     mov cl, [r8]
