@@ -1,13 +1,13 @@
 ---
 
-# Kusanagi Chess Engine (v1.5.6)
+# Kusanagi Chess Engine – The Ghost in the Machine Code (v1.5.6)
 
 ![MIT License](https://img.shields.io/badge/license-MIT-FF4136?labelColor=gray)
 ![Language](https://img.shields.io/badge/Language-x86_64_Assembly-blue?labelColor=gray)
 ![Creator](https://img.shields.io/badge/Creator-Tonmoy_KS-7DF9FF?labelColor=gray)
 
-**Kusanagi v.1.5.6 – The God-Slayer**  
-_A pure hand-crafted assembly chess engine featuring advanced search, hashing, tactical evaluation, and full pawn promotion support._
+**Kusanagi v.1.5.6 – The Ghost in the Machine Code**  
+_Turning your fire against you._
 
 ---
 
