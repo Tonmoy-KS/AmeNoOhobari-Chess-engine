@@ -1,17 +1,17 @@
 ---
 
-# Ame-No-Ohobari Chess Engine (v1.5.4)
+# Kusanagi Chess Engine (v1.5.6)
 
 ![MIT License](https://img.shields.io/badge/license-MIT-FF4136?labelColor=gray)
 ![Language](https://img.shields.io/badge/Language-x86_64_Assembly-blue?labelColor=gray)
 ![Creator](https://img.shields.io/badge/Creator-Tonmoy_KS-7DF9FF?labelColor=gray)
 
-**Ame-No-Ohobari v.1.5.4 – The God-Slayer**  
+**Kusanagi v.1.5.6 – The God-Slayer**  
 _A pure hand-crafted assembly chess engine featuring advanced search, hashing, tactical evaluation, and full pawn promotion support._
 
 ---
 
-## 🚀 Features (v.1.5.4)
+## 🚀 Features (v.1.5.6)
 
 - **Written in x86_64 Assembly:** No dependencies, maximum speed and control.
 - **Iterative Deepening with Aspiration Windows:** Smarter root search for optimal move selection.
@@ -38,9 +38,9 @@ _A pure hand-crafted assembly chess engine featuring advanced search, hashing, t
 
 **How to Compile and Run:**
 ```sh
-nasm -f elf64 -g AmeNoOhobari.asm -o AmeNoOhobari.o
-ld AmeNoOhobari.o -o AmeNoOhobari
-./AmeNoOhobari
+nasm -f elf64 -g Kusanagi-Chess-Engine.nasm -o Kusanagi-Chess-Engine.o
+ld Kusanagi-Chess-Engine.o -o Kusanagi
+./Kusanagi
 ```
 
 **Expected Output:**
@@ -73,8 +73,9 @@ bestmove g1f3
 
 ---
 
-## 🔥 What's New in v.1.5.4
+## 🔥 What's New in v.1.5.6
 
+- **Rebranded as Kusanagi Chess Engine.**
 - **Improved Search Algorithm:**
   - Enhanced alpha-beta, principal variation search, and pruning techniques.
   - Late Move Reductions (LMR) and Null Move Pruning (NMP) for deeper, faster search.
@@ -117,6 +118,6 @@ GitHub: [Tonmoy-KS](https://github.com/Tonmoy-KS)
 
 ---
 
-*May your moves be as sharp as Ame-No-Ohobari’s blade!*
+*May your moves be as sharp as Kusanagi’s blade!*
 
 ---
