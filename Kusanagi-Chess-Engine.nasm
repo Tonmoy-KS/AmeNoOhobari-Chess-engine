@@ -1,5 +1,5 @@
 ; ============================================================================
-; Kusanagi.asm - V.1.5.6 - Rebranded Ame-No-Ohobari Engine
+; Kusanagi.asm - V.1.5.6 - The Ghost in the Machine Code
 ; Version: 1.5.6
 ; Author: tonmoy ks
 ;
